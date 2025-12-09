@@ -6,7 +6,7 @@
 <title>Scan Muka — Hasil</title>
 <style>
   body{font-family:Inter,system-ui,Arial;background:#071428;color:#e6eef6;margin:0;padding:28px}
-  .card{max-width:800px;margin:0 auto;background:rgba(255,255,255,0.02);padding:20px;border-radius:10px}
+  .card{max-width:820px;margin:0 auto;background:rgba(255,255,255,0.02);padding:20px;border-radius:10px}
   h1{margin:0 0 8px 0}
   .small{color:#9fb5c1;font-size:14px}
   a{color:#06b6d4}
@@ -29,7 +29,7 @@
   const summary = document.getElementById('summary');
 
   if(result === 'success'){
-    summary.innerHTML = `<strong>Verifikasi BERHASIL.</strong><br>Timestamp: ${ts}<br>File: disimpan ke folder yang Anda pilih saat proses scan (atau ZIP pada fallback).<br><br>Jika ingin mengunduh/meninjau file, periksa folder lokal yang Anda pilih saat scan.`;
+    summary.innerHTML = `<strong>Verifikasi BERHASIL.</strong><br>Timestamp: ${ts}<br>File-file disimpan ke folder yang Anda pilih saat scan (atau ZIP pada fallback).`;
   } else if(result === 'failed'){
     summary.innerHTML = `<strong>Verifikasi GAGAL.</strong><br>Silakan kembali dan coba ulang.`;
   } else {

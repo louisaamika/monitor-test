@@ -3,40 +3,43 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Scan Muka — Liveness</title>
+<title>Scan Muka — Liveness (Final)</title>
 <style>
   :root{--bg:#071426;--card:#0b1220;--accent:#06b6d4;--text:#e6eef6}
   html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;color:var(--text);background:linear-gradient(180deg,#041024,#071428);display:flex;align-items:center;justify-content:center}
-  .frame{width:920px;max-width:95%;background:rgba(255,255,255,0.02);padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  .frame{width:960px;max-width:98%;background:rgba(255,255,255,0.02);padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
   h1{margin:0 0 8px 0;font-size:18px}
   .layout{display:flex;gap:16px}
-  .left{flex:1}
+  .left{flex:1;position:relative}
   video{width:100%;height:auto;border-radius:8px;background:#000;display:block}
-  #overlay{position:absolute;left:0;top:0}
+  canvas#overlay{position:absolute;left:0;top:0;pointer-events:none}
   .instr{background:#061423;padding:10px;border-radius:8px;margin-top:10px;font-size:14px}
   .controls{margin-top:12px}
   button{background:var(--accent);color:#012;padding:10px 14px;border-radius:8px;border:0;cursor:pointer;font-weight:600}
   .status{margin-top:10px;font-size:14px}
   .hidden{display:none}
-  .right{width:300px}
+  .right{width:320px}
   .small{font-size:13px;color:#9fb5c1}
-  .media-list{margin-top:10px;max-height:260px;overflow:auto;font-size:13px}
+  .media-list{margin-top:10px;max-height:300px;overflow:auto;font-size:13px}
   .media-list a{color:var(--accent);display:block;margin-bottom:6px}
+  .steps{margin-top:8px;display:grid;gap:6px}
+  .step{padding:6px;border-radius:6px;background:#02121a}
+  .ok{color:limegreen;font-weight:700}
+  .bad{color:#f97316}
 </style>
 </head>
 <body>
   <div class="frame">
-    <h1>Scan Muka — Liveness (Demo)</h1>
+    <h1>Scan Muka — Liveness</h1>
     <div class="layout">
       <div class="left">
         <div style="position:relative;">
           <video id="video" autoplay playsinline muted></video>
-          <!-- overlay canvas for landmarks if needed -->
-          <canvas id="overlay" class="hidden"></canvas>
+          <canvas id="overlay"></canvas>
         </div>
 
         <div class="instr" id="instructions">
-          Ikuti instruksi di layar. Langkah: hadap tengah → miring kiri → miring kanan → kedip → angguk.
+          Ikuti instruksi: hadap tengah → miring kiri → miring kanan → kedip → angguk.
         </div>
 
         <div class="controls">
@@ -48,25 +51,34 @@
       </div>
 
       <aside class="right">
-        <div class="instr"><strong>Detail</strong>
-          <div class="small" id="detail">Menunggu aksi</div>
+        <div class="instr">
+          <strong>Detail</strong>
+          <div class="small" id="detail">Menunggu</div>
           <div class="small" id="timer">Waktu tersisa: 120s</div>
           <div class="small" id="progress">Progress: 0/5</div>
-          <div class="small" id="guidance">Instruksi: -</div>
+          <div id="guidance" class="small">Instruksi: -</div>
+
+          <div class="steps" id="stepsBox">
+            <div class="step" id="s_center">1) Hadap tengah — <span id="t_center">pending</span></div>
+            <div class="step" id="s_left">2) Miring kiri — <span id="t_left">pending</span></div>
+            <div class="step" id="s_right">3) Miring kanan — <span id="t_right">pending</span></div>
+            <div class="step" id="s_blink">4) Kedip — <span id="t_blink">pending</span></div>
+            <div class="step" id="s_nod">5) Angguk — <span id="t_nod">pending</span></div>
+          </div>
+
           <div style="margin-top:8px">
-            <button id="chooseFolderBtn">Pilih Folder Simpan (direkomendasikan)</button>
+            <button id="chooseFolderBtn">Pilih Folder Simpan (opsional)</button>
           </div>
         </div>
 
         <div class="instr" style="margin-top:10px">
-          <strong>Media</strong>
+          <strong>Media (preview)</strong>
           <div class="media-list" id="mediaList"></div>
         </div>
       </aside>
     </div>
   </div>
 
-<!-- libraries -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
@@ -74,45 +86,55 @@
 <script>
 (async ()=>{
 
-/* CONFIG */
+// CONFIG
 const MAX_TIME = 120; // detik
-const FRAMES_INTERVAL_MS = 1000; // simpan 1 fps
+const FRAME_SAVE_INTERVAL = 1000; // ms (1 fps)
+const DETECT_FPS = 12; // target loop fps
+const POS_HOLD_FRAMES = 5; // harus bertahan N frame untuk valid
 const EAR_BLINK_THRESHOLD = 0.18;
-const BLINK_WINDOW = 6;
+const BLINK_MIN_DURATION_FRAMES = 2;
 
-/* DOM */
+// DOM
 const video = document.getElementById('video');
 const overlay = document.getElementById('overlay');
+const ctx = overlay.getContext('2d');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const chooseFolderBtn = document.getElementById('chooseFolderBtn');
+const statusLine = document.getElementById('statusLine');
 const detail = document.getElementById('detail');
 const timerEl = document.getElementById('timer');
 const progressEl = document.getElementById('progress');
-const guidanceEl = document.getElementById('guidance');
-const statusLine = document.getElementById('statusLine');
+const guidance = document.getElementById('guidance');
 const mediaList = document.getElementById('mediaList');
+const t_center = document.getElementById('t_center');
+const t_left = document.getElementById('t_left');
+const t_right = document.getElementById('t_right');
+const t_blink = document.getElementById('t_blink');
+const t_nod = document.getElementById('t_nod');
 
-let folderHandle = null; // directory handle
+let model = null;
 let streamRef = null;
 let recorder = null;
 let recordedBlobs = [];
 let frameBlobs = [];
+let folderHandle = null;
 let captureInterval = null;
 let detectLoopActive = false;
-let model = null;
+let lastFrameData = null;
 
-/* load model */
+// load model
 statusLine.innerText = 'Memuat model...';
 try{
   model = await faceLandmarksDetection.load(faceLandmarksDetection.SupportedPackages.mediapipeFacemesh, {maxFaces:1});
   statusLine.innerText = 'Model siap.';
 } catch(e){
   console.warn(e);
-  statusLine.innerText = 'Gagal memuat model; deteksi wajah mungkin tidak tersedia.';
+  statusLine.innerText = 'Gagal memuat model. Periksa koneksi/infrastruktur.';
+  model = null;
 }
 
-/* helper util */
+// helpers
 function addMediaItem(name, blob){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -121,37 +143,30 @@ function addMediaItem(name, blob){
   a.textContent = name;
   mediaList.prepend(a);
 }
-
 function averagePoint(idxs, landmarks){
   let x=0,y=0,c=0;
   for(const i of idxs){ if(!landmarks[i]) continue; x+=landmarks[i][0]; y+=landmarks[i][1]; c++; }
   return [x/c, y/c];
 }
-
 function computeEAR(upper, lower){
   const v = (Math.hypot(upper[1][0]-lower[5][0], upper[1][1]-lower[5][1]) +
              Math.hypot(upper[2][0]-lower[4][0], upper[2][1]-lower[4][1]))/2;
   const h = Math.hypot(upper[0][0]-upper[3][0], upper[0][1]-upper[3][1]) || 1;
   return v/h;
 }
-
 function estimateYaw(landmarks){
   const left = averagePoint([33,133,159,158], landmarks);
   const right = averagePoint([362,263,386,387], landmarks);
-  const nose = landmarks[1] || [ (left[0]+right[0])/2, (left[1]+right[1])/2 ];
+  const nose = landmarks[1] || [(left[0]+right[0])/2,(left[1]+right[1])/2];
   const dxL = nose[0] - left[0];
   const dxR = right[0] - nose[0];
   return (dxL - dxR) * 0.5;
 }
-
 function estimatePitch(landmarks){
   const nose = landmarks[1];
   const eyeCenter = averagePoint([33,133,362,263], landmarks);
   return (eyeCenter[1] - nose[1]);
 }
-
-/* frame diff */
-let lastFrameData = null;
 function computeFrameDiff(imgData){
   if(!lastFrameData){ lastFrameData = imgData; return 0; }
   let diff=0;
@@ -164,7 +179,7 @@ function computeFrameDiff(imgData){
   return diff / (imgData.data.length/4);
 }
 
-/* choose folder */
+// folder picker
 chooseFolderBtn.addEventListener('click', async ()=>{
   if('showDirectoryPicker' in window){
     try{
@@ -174,11 +189,11 @@ chooseFolderBtn.addEventListener('click', async ()=>{
       detail.innerText = 'Pemilihan folder dibatalkan.';
     }
   } else {
-    detail.innerText = 'Browser tidak mendukung penyimpanan lokal otomatis. (Fallback ZIP akan digunakan.)';
+    detail.innerText = 'Browser tidak mendukung File System Access API. Akan pakai ZIP fallback.';
   }
 });
 
-/* start camera */
+// start camera
 async function startCamera(){
   const s = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480}, audio:true});
   video.srcObject = s;
@@ -189,13 +204,12 @@ async function startCamera(){
   return s;
 }
 
-/* main scan workflow */
+// detection state machine
 startBtn.addEventListener('click', async ()=>{
-  // hide start, show stop
   startBtn.classList.add('hidden');
   stopBtn.classList.remove('hidden');
-  statusLine.innerText = 'Preparing...';
-  guidanceEl.innerText = 'Meminta akses kamera...';
+  statusLine.innerText = 'Memulai...';
+  guidance.innerText = 'Minta izin kamera (izinkan).';
   detail.innerText = 'Jika diminta, izinkan akses kamera.';
   try{
     await startCamera();
@@ -207,21 +221,16 @@ startBtn.addEventListener('click', async ()=>{
     return;
   }
 
-  // start media recorder
+  // recorder
   recordedBlobs = [];
-  try{
-    recorder = new MediaRecorder(streamRef, {mimeType:'video/webm;codecs=vp9,opus'});
-  }catch(e){
-    recorder = new MediaRecorder(streamRef);
-  }
-  recorder.ondataavailable = (ev)=>{ if(ev.data && ev.data.size) recordedBlobs.push(ev.data); };
+  try{ recorder = new MediaRecorder(streamRef, {mimeType:'video/webm;codecs=vp9,opus'}); }
+  catch(e){ recorder = new MediaRecorder(streamRef); }
+  recorder.ondataavailable = ev=>{ if(ev.data && ev.data.size) recordedBlobs.push(ev.data); };
   recorder.start();
 
-  // capture frames per second
+  // per-second frame capture
   frameBlobs = [];
-  const capCanvas = document.createElement('canvas');
-  capCanvas.width = overlay.width;
-  capCanvas.height = overlay.height;
+  const capCanvas = document.createElement('canvas'); capCanvas.width = overlay.width; capCanvas.height = overlay.height;
   const capCtx = capCanvas.getContext('2d');
   captureInterval = setInterval(()=>{
     capCtx.drawImage(video,0,0,capCanvas.width,capCanvas.height);
@@ -231,31 +240,42 @@ startBtn.addEventListener('click', async ()=>{
       frameBlobs.push({blob:b,name});
       addMediaItem(name,b);
     }, 'image/png');
-  }, FRAMES_INTERVAL_MS);
+  }, FRAME_SAVE_INTERVAL);
 
-  // detection loop variables
+  // detection variables
   detectLoopActive = true;
   const startTime = Date.now();
-  let elapsed = 0;
+  let blinkState = {down:false, frames:0, counted:false};
+  let yawBuffer = []; // store last N yaw values
+  let pitchBuffer = [];
   let earBuffer = [];
-  let blinkDetected = false;
-  const stepState = {center:false,left:false,right:false,blink:false,nod:false};
-  const stepsOrder = ['center','left','right','blink','nod'];
-  guidanceEl.innerText = 'Posisi: hadapkan muka ke kamera (tengah)';
-  progressEl.innerText = `Progress: 0/${stepsOrder.length}`;
-  statusLine.innerText = 'Scanning...';
+  let consecutive = {center:0,left:0,right:0,nod:0};
+  const steps = {center:false,left:false,right:false,blink:false,nod:false};
+  const stepOrder = ['center','left','right','blink','nod'];
 
-  // loop
-  async function loop(){
+  // UI reset
+  t_center.textContent = 'pending'; t_left.textContent='pending'; t_right.textContent='pending'; t_blink.textContent='pending'; t_nod.textContent='pending';
+  guidance.innerText = 'Hadapkan muka ke tengah';
+
+  async function detectLoop(){
     if(!detectLoopActive) return;
     const preds = model ? await model.estimateFaces({input:video, returnTensors:false, flipHorizontal:false}) : [];
+    ctx.clearRect(0,0,overlay.width,overlay.height);
+
     if(preds && preds.length>0){
       const p = preds[0];
       const lm = p.scaledMesh;
-      // yaw/pitch
+
+      // draw small dots
+      ctx.fillStyle = 'rgba(6,182,212,0.9)';
+      for(let i=0;i<lm.length;i+=8){
+        ctx.beginPath(); ctx.arc(lm[i][0], lm[i][1], 1.2, 0, Math.PI*2); ctx.fill();
+      }
+
       const yaw = estimateYaw(lm);
       const pitch = estimatePitch(lm);
-      // blink
+
+      // EAR
       const leftUpper = [lm[159], lm[160], lm[158], lm[33]];
       const leftLower = [lm[145], lm[144], lm[153], lm[133]];
       const rightUpper = [lm[386], lm[387], lm[385], lm[362]];
@@ -263,131 +283,169 @@ startBtn.addEventListener('click', async ()=>{
       const earL = computeEAR(leftUpper,leftLower);
       const earR = computeEAR(rightUpper,rightLower);
       const ear = (earL+earR)/2;
-      earBuffer.push(ear);
-      if(earBuffer.length>BLINK_WINDOW) earBuffer.shift();
-      if(ear < EAR_BLINK_THRESHOLD) blinkDetected = true;
 
-      // motion
-      const tmpCanvas = document.createElement('canvas');
-      tmpCanvas.width = overlay.width; tmpCanvas.height = overlay.height;
-      const tctx = tmpCanvas.getContext('2d');
-      tctx.drawImage(video,0,0,tmpCanvas.width,tmpCanvas.height);
-      const id = tctx.getImageData(0,0,tmpCanvas.width,tmpCanvas.height);
-      const motion = computeFrameDiff(id);
+      // frame diff / motion
+      const tmpCanvas = document.createElement('canvas'); tmpCanvas.width = overlay.width; tmpCanvas.height = overlay.height;
+      const tctx = tmpCanvas.getContext('2d'); tctx.drawImage(video,0,0,tmpCanvas.width,tmpCanvas.height);
+      const imgData = tctx.getImageData(0,0,tmpCanvas.width,tmpCanvas.height);
+      const motion = computeFrameDiff(imgData);
 
-      // update step states
-      if(!stepState.center && Math.abs(yaw) < 8) stepState.center = true;
-      if(!stepState.left && yaw < -12) stepState.left = true;
-      if(!stepState.right && yaw > 12) stepState.right = true;
-      if(!stepState.blink && blinkDetected) stepState.blink = true;
-      if(!stepState.nod && Math.abs(pitch) > 10) stepState.nod = true;
+      // update buffers
+      yawBuffer.push(yaw); if(yawBuffer.length>POS_HOLD_FRAMES) yawBuffer.shift();
+      pitchBuffer.push(pitch); if(pitchBuffer.length>POS_HOLD_FRAMES) pitchBuffer.shift();
+      earBuffer.push(ear); if(earBuffer.length>BLINK_MIN_DURATION_FRAMES*3) earBuffer.shift();
 
-      const completed = stepsOrder.filter(s=>stepState[s]).length;
-      progressEl.innerText = `Progress: ${completed}/${stepsOrder.length}`;
-      const next = stepsOrder.find(s=>!stepState[s]);
-      guidanceEl.innerText = next ? {center:'Hadapkan muka ke tengah',left:'Miring ke KIRI',right:'Miring ke KANAN',blink:'Kedipkan mata',nod:'Angguk kepala'}[next] : 'Semua langkah selesai';
+      // blink detection: detect EAR drop then rise
+      if(!blinkState.down && ear < EAR_BLINK_THRESHOLD){ blinkState.down = true; blinkState.frames = 1; }
+      else if(blinkState.down && ear < EAR_BLINK_THRESHOLD){ blinkState.frames++; }
+      else if(blinkState.down && ear >= EAR_BLINK_THRESHOLD){
+        // a blink happened if down lasted at least BLINK_MIN_DURATION_FRAMES
+        if(blinkState.frames >= BLINK_MIN_DURATION_FRAMES) blinkState.counted = true;
+        blinkState.down = false; blinkState.frames = 0;
+      }
 
-      detail.innerText = `yaw≈${yaw.toFixed(1)}, pitch≈${pitch.toFixed(1)}, EAR=${ear.toFixed(3)}, motion≈${motion.toFixed(1)}`;
+      // position checks with hold-time (consecutive frames)
+      // center: mean(abs(yawBuffer)) < 8
+      const meanYaw = yawBuffer.reduce((a,b)=>a+b,0)/Math.max(1,yawBuffer.length);
+      const meanPitch = pitchBuffer.reduce((a,b)=>a+b,0)/Math.max(1,pitchBuffer.length);
 
-      // success condition
-      const allDone = stepsOrder.every(s=>stepState[s]);
-      if(allDone && motion > 8){
+      // center
+      if(Math.abs(meanYaw) < 8) consecutive.center++; else consecutive.center = 0;
+      if(consecutive.center >= POS_HOLD_FRAMES) steps.center = true;
+
+      // left
+      if(meanYaw < -12) consecutive.left++; else consecutive.left = 0;
+      if(consecutive.left >= POS_HOLD_FRAMES) steps.left = true;
+
+      // right
+      if(meanYaw > 12) consecutive.right++; else consecutive.right = 0;
+      if(consecutive.right >= POS_HOLD_FRAMES) steps.right = true;
+
+      // nod (pitch up/down)
+      if(Math.abs(meanPitch) > 10) consecutive.nod++; else consecutive.nod = 0;
+      if(consecutive.nod >= POS_HOLD_FRAMES) steps.nod = true;
+
+      // UI updates
+      t_center.textContent = steps.center ? 'done' : (consecutive.center>0?`holding ${consecutive.center}`:'pending');
+      t_left.textContent = steps.left ? 'done' : (consecutive.left>0?`holding ${consecutive.left}`:'pending');
+      t_right.textContent = steps.right ? 'done' : (consecutive.right>0?`holding ${consecutive.right}`:'pending');
+      t_nod.textContent = steps.nod ? 'done' : (consecutive.nod>0?`holding ${consecutive.nod}`:'pending');
+      t_blink.textContent = steps.blink ? 'done' : (blinkState.counted ? 'detected' : 'pending');
+
+      detail.innerText = `yaw≈${meanYaw.toFixed(1)}, pitch≈${meanPitch.toFixed(1)}, EAR=${ear.toFixed(3)}, motion≈${motion.toFixed(1)}`;
+
+      // set blink step when counted true
+      if(blinkState.counted) steps.blink = true;
+
+      // guidance: next incomplete
+      const next = stepOrder.find(s=>!steps[s]);
+      const messages = {center:'Hadapkan muka ke tengah', left:'Miring ke KIRI sekarang', right:'Miring ke KANAN sekarang', blink:'Kedipkan mata sekarang', nod:'Angguk kepala sekarang'};
+      guidance.innerText = next ? messages[next] : 'Semua langkah selesai';
+
+      // success if all steps true and motion present
+      const allDone = stepOrder.every(s=>steps[s]);
+      if(allDone && motion > 6){
         detectLoopActive = false;
-        finish(true, {startTime, endTime:Date.now(), stepState, recordedBlobs, frameBlobs});
+        await finish(true, {startTime: startTime, endTime: Date.now(), steps});
         return;
       }
     } else {
       detail.innerText = 'Wajah tidak terdeteksi. Arahkan ke kamera.';
+      guidance.innerText = 'Arahkan wajah ke kamera';
     }
 
-    elapsed = Math.floor((Date.now() - startTime)/1000);
+    // timer
+    const elapsed = Math.floor((Date.now() - startTime)/1000);
     const remain = MAX_TIME - elapsed;
     timerEl.innerText = `Waktu tersisa: ${remain}s`;
+    progressEl.innerText = `Progress: ${Object.values(steps).filter(Boolean).length}/5`;
     if(remain <= 0){
       detectLoopActive = false;
-      finish(false, {startTime, endTime:Date.now(), stepState, recordedBlobs, frameBlobs});
+      await finish(false, {startTime: startTime, endTime: Date.now(), steps});
       return;
     }
-    requestAnimationFrame(loop);
+
+    // schedule next detect (approx DETECT_FPS)
+    setTimeout(()=>requestAnimationFrame(detectLoop), Math.max(0, Math.floor(1000/DETECT_FPS)));
   }
 
-  loop();
+  // start detection
+  const startTime = Date.now();
+  requestAnimationFrame(detectLoop);
 });
 
-/* stop button behavior */
-stopBtn.addEventListener('click', ()=>{
-  stopScanCleanUp(false);
+// stop button
+stopBtn.addEventListener('click', async ()=>{
+  // user stops manually -> cleanup and allow retry
+  await stopCleanup(true);
 });
 
-/* cleanup & finish */
+// finish & saving
 async function finish(success, data){
-  statusLine.innerText = success ? 'Verifikasi: BERHASIL' : 'Verifikasi: GAGAL';
-  // stop media recorder and camera
-  stopScanCleanUp(success === false);
+  statusLine.innerText = success ? 'Verifikasi BERHASIL' : 'Verifikasi GAGAL';
+  // stop recorder & camera
+  await stopCleanup(false);
 
   // create video blob
   const videoBlob = new Blob(recordedBlobs, {type: recordedBlobs[0]?.type || 'video/webm'});
-
-  // manifest
+  const ts = Date.now();
   const manifest = {
     result: success ? 'success' : 'failed',
-    ts: Date.now(),
-    duration_ms: data ? (data.endTime - data.startTime) : 0,
-    steps: data ? data.stepState : {},
-    frames_count: frameBlobs.length,
+    ts, duration_ms: data ? (data.endTime - data.startTime) : 0,
+    steps: data ? data.steps : {},
+    frame_count: frameBlobs.length,
     video_size: videoBlob.size
   };
 
-  // try save to folder if handle present else zip
-  if(folderHandle && 'getFileHandle' in folderHandle){
+  // try save to folder (create frames dir)
+  if(folderHandle && 'getDirectoryHandle' in folderHandle){
     try{
-      // video
-      const vHandle = await folderHandle.getFileHandle(`scan_result_${manifest.ts}.webm`, {create:true});
+      // create frames dir
+      const framesDir = await folderHandle.getDirectoryHandle('frames', {create:true});
+      // save frames
+      for(const f of frameBlobs){
+        const fh = await framesDir.getFileHandle(f.name, {create:true});
+        const w = await fh.createWritable();
+        await w.write(f.blob);
+        await w.close();
+      }
+      // save video
+      const vname = `scan_result_${ts}.webm`;
+      const vHandle = await folderHandle.getFileHandle(vname, {create:true});
       const wv = await vHandle.createWritable();
       await wv.write(videoBlob);
       await wv.close();
-      addMediaItem(`scan_result_${manifest.ts}.webm`, videoBlob);
-
-      // frames
-      for(const f of frameBlobs){
-        const fh = await folderHandle.getFileHandle(f.name, {create:true});
-        const wf = await fh.createWritable();
-        await wf.write(f.blob);
-        await wf.close();
-      }
-
-      // manifest.json
-      const mf = await folderHandle.getFileHandle(`manifest_${manifest.ts}.json`, {create:true});
-      const wm = await mf.createWritable();
+      // save manifest
+      const mHandle = await folderHandle.getFileHandle(`manifest_${ts}.json`, {create:true});
+      const wm = await mHandle.createWritable();
       await wm.write(JSON.stringify(manifest, null, 2));
       await wm.close();
 
-      detail.innerText = `Tersimpan ke folder lokal. (${success ? 'success' : 'failed'})`;
+      addMediaItem(vname, videoBlob);
+      detail.innerText = `Disimpan ke folder lokal. (${success ? 'success':'failed'})`;
     }catch(e){
-      console.error(e);
+      console.error('save folder error', e);
       await saveAsZip(videoBlob, frameBlobs, manifest);
     }
   } else {
     await saveAsZip(videoBlob, frameBlobs, manifest);
   }
 
-  // redirect on success
   if(success){
-    const ts = manifest.ts;
-    // small delay to let file operations complete visually
-    setTimeout(()=>{ window.location.href = `result.html?result=success&ts=${ts}`; }, 800);
+    // redirect to result page
+    setTimeout(()=>{ window.location.href = `result.html?result=success&ts=${ts}`; }, 700);
   } else {
-    // show start button again so user dapat coba ulang
+    // allow retry
     startBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
-    statusLine.innerText = 'Gagal. Tekan Mulai Scan untuk coba lagi.';
+    statusLine.innerText = 'Gagal verifikasi. Tekan Mulai Scan untuk ulangi.';
   }
 }
 
-async function stopScanCleanUp(stoppedByUser){
+async function stopCleanup(stoppedByUser){
   detectLoopActive = false;
   clearInterval(captureInterval);
-  if(recorder && recorder.state !== 'inactive') {
+  if(recorder && recorder.state !== 'inactive'){
     try{ recorder.stop(); }catch(e){/*ignore*/ }
   }
   if(streamRef){
@@ -397,11 +455,11 @@ async function stopScanCleanUp(stoppedByUser){
   if(stoppedByUser){
     startBtn.classList.remove('hidden');
     stopBtn.classList.add('hidden');
-    statusLine.innerText = 'Dihentikan pengguna. Tekan Mulai Scan untuk mengulang.';
+    statusLine.innerText = 'Dihentikan pengguna. Tekan Mulai Scan untuk ulangi.';
   }
 }
 
-/* save as ZIP fallback */
+// ZIP fallback
 async function saveAsZip(videoBlob, frames, manifest){
   const zip = new JSZip();
   if(videoBlob && videoBlob.size>0) zip.file(`scan_result_${manifest.ts}.webm`, videoBlob);
@@ -414,6 +472,7 @@ async function saveAsZip(videoBlob, frames, manifest){
   URL.revokeObjectURL(url);
   detail.innerText = 'Hasil disimpan sebagai ZIP (fallback).';
 }
+
 })();
 </script>
 </body>
