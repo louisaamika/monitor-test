@@ -3,11 +3,12 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>Scan Muka — Final (MediaPipe fix)</title>
+<title>Scan Muka — Fullset</title>
 <style>
   :root{--bg:#071428;--card:#0b1220;--accent:#06b6d4;--text:#e6eef6}
   html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;color:var(--text);background:linear-gradient(180deg,#041024,#071428);display:flex;align-items:flex-start;justify-content:center;padding:18px}
   .frame{width:980px;max-width:98%;background:rgba(255,255,255,0.02);padding:16px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  h1{margin:0 0 10px 0;font-size:18px}
   .layout{display:flex;gap:14px;flex-wrap:wrap}
   .left{flex:1;min-width:320px}
   .right{width:360px}
@@ -26,7 +27,7 @@
 </head>
 <body>
   <div class="frame">
-    <h1>Scan Muka — Final (MediaPipe fix)</h1>
+    <h1>Scan Muka — Fullset</h1>
     <div class="layout">
       <div class="left">
         <div class="video-wrap">
@@ -72,12 +73,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.7.1/dist/jszip.min.js"></script>
 <script>
-/* ============================================================
-   Library URLs
-   - TensorFlow.js (UMD)
-   - face-landmarks-detection v1.0.6 (ESM + UMD tries)
-   - MediaPipe face_mesh & util libs (UMD) — must load BEFORE model
-   ============================================================ */
+/* ------------------ URLS ------------------ */
 const TF_URLS = [
   'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js',
   'https://unpkg.com/@tensorflow/tfjs@3.21.0/dist/tf.min.js'
@@ -93,7 +89,6 @@ const FLD_UMD_URLS = [
   'https://unpkg.com/@tensorflow-models/face-landmarks-detection@1.0.6/dist/face-landmarks-detection.min.js'
 ];
 
-/* MediaPipe UMD (must be loaded before face-landmarks-detection ESM fallback) */
 const MEDIAPIPE_URLS = [
   'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js',
   'https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js',
@@ -101,67 +96,56 @@ const MEDIAPIPE_URLS = [
   'https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js'
 ];
 
-/* DOM helpers */
+/* ------------------ DOM helpers ------------------ */
 const $ = id => document.getElementById(id);
 const logEl = $('log');
 function log(...a){ const s = a.map(x => (typeof x==='object' ? JSON.stringify(x) : String(x))).join(' '); logEl.textContent = (new Date()).toISOString() + ' — ' + s + '\n' + logEl.textContent; }
 
-/* Generic script loader */
-function loadScript(url){ return new Promise((res,reject)=>{ const s=document.createElement('script'); s.src=url; s.async=true; s.onload=()=>res(url); s.onerror=(e)=>reject(new Error('script load failed '+url)); document.head.appendChild(s); }); }
-async function tryLoadList(urls){ for(const u of urls){ try{ await loadScript(u); return u; }catch(e){ log('load failed',u,e.message||e); } } throw new Error('all failed'); }
-async function tryImportList(urls){ for(const u of urls){ try{ const mod = await import(u); return {url:u,mod}; }catch(e){ log('import failed',u,e.message||e); } } throw new Error('all imports failed'); }
+/* ------------------ loaders ------------------ */
+function loadScript(url){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=url; s.async=true; s.onload=()=>res(url); s.onerror=(e)=>rej(new Error('script load failed '+url)); document.head.appendChild(s); }); }
+async function tryLoadList(urls){
+  for(const u of urls){
+    try{ await loadScript(u); return u; }catch(e){ log('load failed', u, e.message || e); }
+  }
+  throw new Error('all failed');
+}
+async function tryImportList(urls){
+  for(const u of urls){
+    try{ const mod = await import(u); return {url:u,mod}; }catch(e){ log('import failed', u, e.message || e); }
+  }
+  throw new Error('all imports failed');
+}
 
-/* Loader that ensures Mediapipe (face_mesh) UMD loaded, then model */
+/* Ensure libraries available; many fallbacks */
 async function ensureLibraries(){
   $('loaderStatus').textContent = 'loading tf...';
-  // ensure tf
   if(!window.tf){
     try{ const tfUrl = await tryLoadList(TF_URLS); log('tf loaded from', tfUrl); }catch(e){ log('tf load failed', e.message||e); }
   } else log('tf already present');
 
-  // load mediapipe UMD libs first (face_mesh + utils) — these expose global FaceMesh and related
   $('loaderStatus').textContent = 'loading mediapipe libs...';
   for(const url of MEDIAPIPE_URLS){
-    try{
-      await loadScript(url);
-      log('mediapipe script loaded', url);
-    }catch(e){
-      log('mediapipe script failed', url, e.message||e);
-    }
+    try{ await loadScript(url); log('mediapipe script loaded', url); }catch(e){ log('mediapipe script failed', url, e.message||e); }
   }
 
-  // try import ESM (preferred)
   $('loaderStatus').textContent = 'loading face-landmarks (esm)...';
   try{
     const r = await tryImportList(FLD_ESM_URLS);
-    // ESM returns module object (may refer to @mediapipe/face_mesh which we already loaded as global)
     window._fld_esm = r.mod;
-    // expose in window in a way loadModel can find it
     window.faceLandmarksDetection = r.mod;
     log('face-landmarks (esm) loaded from', r.url);
     $('loaderStatus').textContent = 'esm ok';
     return;
-  }catch(e){
-    log('face-landmarks esm failed', e.message||e);
-  }
+  }catch(e){ log('face-landmarks esm failed', e.message||e); }
 
-  // fallback UMD
   $('loaderStatus').textContent = 'loading face-landmarks (umd)...';
   try{
     const u = await tryLoadList(FLD_UMD_URLS);
-    // UMD should place faceLandmarksDetection on window
-    if(window.faceLandmarksDetection || window.faceLandmarksDetection?.default){
-      log('face-landmarks UMD exposed on window from', u);
-      $('loaderStatus').textContent = 'umd ok';
-      return;
-    } else {
-      log('UMD loaded but window.faceLandmarksDetection missing for', u);
-    }
-  }catch(e){
-    log('UMD load failed', e.message||e);
-  }
+    log('face-landmarks UMD exposed on window from', u);
+    $('loaderStatus').textContent = 'umd ok';
+    return;
+  }catch(e){ log('UMD load failed', e.message||e); }
 
-  // fetch+eval fallback
   $('loaderStatus').textContent = 'fetch+eval fallback';
   for(const u of FLD_UMD_URLS){
     try{
@@ -169,34 +153,21 @@ async function ensureLibraries(){
       if(!r.ok){ log('fetch failed', u, r.status); continue; }
       const txt = await r.text();
       if(txt.trim().startsWith('<!doctype') || txt.includes('<html')){ log('fetched HTML instead of JS', u); continue; }
-      const script = document.createElement('script');
-      script.text = txt + '\n//# sourceURL=' + u;
-      document.head.appendChild(script);
-      if(window.faceLandmarksDetection || window.faceLandmarksDetection?.default){
-        log('fetch+eval exposed faceLandmarksDetection from', u);
-        $('loaderStatus').textContent = 'eval ok';
-        return;
-      } else {
-        log('fetch+eval loaded but global missing', u);
-      }
-    }catch(e){
-      log('fetch+eval failed', u, e.message||e);
-    }
+      const script = document.createElement('script'); script.text = txt + '\n//# sourceURL=' + u; document.head.appendChild(script);
+      if(window.faceLandmarksDetection || window.faceLandmarksDetection?.default){ log('fetch+eval exposed faceLandmarksDetection from', u); $('loaderStatus').textContent = 'eval ok'; return; }
+      else log('fetch+eval loaded but global missing', u);
+    }catch(e){ log('fetch+eval failed', u, e.message||e); }
   }
 
   $('loaderStatus').textContent = 'failed';
-  $('messages').textContent = 'Gagal memuat library model; jika hosting memblokir import/module, solusinya adalah menyajikan bundle library secara lokal (saya bisa bantu buat file itu).';
+  $('messages').textContent = 'Gagal memuat library model; Anda bisa meminta saya buatkan versi embed yang menyertakan bundle library di dalam HTML.';
 }
 
-/* Call early to warm caches */
+/* Warm libraries on load */
 ensureLibraries();
 
-/* ========== Model loader helper (handles different export shapes) ========== */
+/* ------------------ resilient model loader (fullset) ------------------ */
 function resolveFldModule(){
-  // possible shapes:
-  // - window.faceLandmarksDetection (UMD or ESM exposed)
-  // - window.faceLandmarksDetection.default (some bundlers)
-  // - window._fld_esm (we set earlier on ESM import)
   if(window.faceLandmarksDetection) return window.faceLandmarksDetection;
   if(window._fld_esm) return window._fld_esm;
   if(window.faceLandmarksDetection && window.faceLandmarksDetection.default) return window.faceLandmarksDetection.default;
@@ -213,57 +184,112 @@ async function loadModel(){
     return false;
   }
 
-  // find SupportedPackages object robustly
-  const SupportedPackages = fld.SupportedPackages ?? fld.default?.SupportedPackages ?? (fld.SupportedPackages ? fld.SupportedPackages : null);
-  if(!SupportedPackages){
-    log('Warning: SupportedPackages not found on module; attempting both API shapes.');
-  }
+  try { log('faceLandmarksDetection keys:', Object.keys(fld || {}).join(', ')); } catch(e){}
 
-  // prefer Mediapipe facemesh package if available
-  const packageArg = (SupportedPackages && (SupportedPackages.mediapipeFacemesh ?? SupportedPackages.mediapipeFacemesh)) || undefined;
+  // SupportedPackages discovery
+  const SupportedPackages = fld.SupportedPackages ?? fld.default?.SupportedPackages ?? null;
 
+  // Strategy A: fld.load(...)
   try{
-    if(window.tf && window.tf.setBackend){
-      try{ await window.tf.setBackend('webgl'); log('tf backend webgl set'); }catch(e){ log('tf setBackend failed', e.message||e); }
+    if(typeof fld.load === 'function'){
+      const pkg = SupportedPackages?.mediapipeFacemesh ?? SupportedPackages;
+      log('Attempting fld.load(...)');
+      const m = await fld.load(pkg, { maxFaces: 1 });
+      window._faceModel = m;
+      $('modelStatus').textContent = 'ready';
+      log('Model loaded via fld.load');
+      return true;
     }
+  }catch(e){ log('fld.load failed', e && e.message ? e.message : e); }
 
-    // call fld.load — handle case where module is wrapped as default
-    let modelModule;
-    try{
-      if(typeof fld.load === 'function'){
-        modelModule = await fld.load(packageArg ?? fld.SupportedPackages?.mediapipeFacemesh, {maxFaces:1});
-      } else if (typeof fld.default?.load === 'function'){
-        modelModule = await fld.default.load(packageArg ?? fld.default.SupportedPackages?.mediapipeFacemesh, {maxFaces:1});
-      } else {
-        // last resort: try using window._fld_esm
-        if(window._fld_esm && typeof window._fld_esm.load === 'function'){
-          modelModule = await window._fld_esm.load(window._fld_esm.SupportedPackages?.mediapipeFacemesh, {maxFaces:1});
-        } else {
-          throw new Error('load function not found on faceLandmarksDetection module');
-        }
+  // Strategy B: fld.default.load(...)
+  try{
+    if(fld.default && typeof fld.default.load === 'function'){
+      log('Attempting fld.default.load(...)');
+      const pkg = fld.default.SupportedPackages?.mediapipeFacemesh ?? fld.default.SupportedPackages;
+      const m = await fld.default.load(pkg, { maxFaces: 1 });
+      window._faceModel = m;
+      $('modelStatus').textContent = 'ready';
+      log('Model loaded via fld.default.load');
+      return true;
+    }
+  }catch(e){ log('fld.default.load failed', e && e.message ? e.message : e); }
+
+  // Strategy C: createDetector
+  try{
+    if(typeof fld.createDetector === 'function'){
+      log('Attempting fld.createDetector(...)');
+      const optsList = [
+        { model: 'MediaPipeFaceMesh', runtime: 'tfjs' },
+        { runtime: 'tfjs' },
+        {}
+      ];
+      for(const opts of optsList){
+        try{
+          const detector = await fld.createDetector(opts);
+          if(detector && typeof detector.estimateFaces === 'function'){
+            window._faceModel = detector;
+            $('modelStatus').textContent = 'ready';
+            log('Model created via createDetector with opts', opts);
+            return true;
+          }
+        }catch(inner){ log('createDetector attempt failed for opts', opts, inner && inner.message ? inner.message : inner); }
       }
-    }catch(innerErr){
-      // bubble friendly error
-      log('inner load error', innerErr && innerErr.message ? innerErr.message : innerErr);
-      throw innerErr;
     }
+  }catch(e){ log('fld.createDetector failed', e && e.message ? e.message : e); }
 
-    // modelModule could be the loaded model (some libs export directly)
-    // store on global 'model' variable used by detect loop
-    window._faceModel = modelModule;
-    $('modelStatus').textContent = 'ready';
-    $('messages').textContent = 'Model siap.';
-    log('model loaded successfully');
-    return true;
-  }catch(err){
-    $('modelStatus').textContent = 'failed';
-    $('messages').textContent = 'Gagal memuat model: ' + (err.message || err);
-    log('model load error', err);
-    return false;
-  }
+  // Strategy D: try common global factories
+  try{
+    if(fld.FaceMesh && typeof fld.FaceMesh === 'function'){
+      log('Detected fld.FaceMesh constructor — attempting instantiate');
+      try{
+        const inst = new fld.FaceMesh({ locateFile: (f)=>f });
+        if(typeof inst.send === 'function' || typeof inst.estimate === 'function'){
+          window._faceModel = inst;
+          $('modelStatus').textContent = 'ready';
+          log('Model instantiated via fld.FaceMesh');
+          return true;
+        }
+      }catch(e){ log('fld.FaceMesh instantiation failed', e && e.message ? e.message : e); }
+    }
+    if(fld.FaceLandmarksDetector && typeof fld.FaceLandmarksDetector.create === 'function'){
+      log('Detected fld.FaceLandmarksDetector.create — attempting create');
+      try{
+        const det = await fld.FaceLandmarksDetector.create();
+        if(det && typeof det.estimateFaces === 'function'){ window._faceModel = det; $('modelStatus').textContent = 'ready'; log('Model created via FaceLandmarksDetector.create'); return true; }
+      }catch(e){ log('FaceLandmarksDetector.create failed', e && e.message ? e.message : e); }
+    }
+  }catch(e){ log('Alternate factory attempts failed', e && e.message ? e.message : e); }
+
+  // Strategy E: scan window for candidate modules
+  try{
+    const keys = Object.keys(window).filter(k => k.toLowerCase().includes('landmark') || k.toLowerCase().includes('faceland') || k.toLowerCase().includes('face'));
+    log('Scanning globals for candidate modules: ' + keys.slice(0,20).join(', '));
+    for(const k of keys){
+      const cand = window[k];
+      if(cand && typeof cand.load === 'function'){
+        try{
+          log('Attempting to load using global window.'+k+'.load');
+          const m = await cand.load(cand.SupportedPackages?.mediapipeFacemesh ?? cand.SupportedPackages, { maxFaces: 1 });
+          if(m){ window._faceModel = m; $('modelStatus').textContent = 'ready'; log('Loaded via window.'+k+'.load'); return true; }
+        }catch(err){ log('window.'+k+'.load failed', err && err.message ? err.message : err); }
+      }
+      if(cand && typeof cand.createDetector === 'function'){
+        try{
+          const d = await cand.createDetector({ runtime:'tfjs' });
+          if(d && typeof d.estimateFaces === 'function'){ window._faceModel = d; $('modelStatus').textContent = 'ready'; log('Created detector via window.'+k+'.createDetector'); return true; }
+        }catch(err){ log('window.'+k+'.createDetector failed', err && err.message ? err.message : err); }
+      }
+    }
+  }catch(e){ log('Global scan failed', e && e.message ? e.message : e); }
+
+  $('modelStatus').textContent = 'failed';
+  $('messages').textContent = 'Gagal memuat model: load function not found on faceLandmarksDetection module';
+  log('All model load strategies failed — please embed official UMD bundle or provide module with load/createDetector API.');
+  return false;
 }
 
-/* ================= Liveness & capture (same as before, but uses window._faceModel) ================= */
+/* ------------------ Liveness / capture ------------------ */
 let streamRef = null;
 let recorder = null;
 let recordedBlobs = [];
@@ -273,36 +299,28 @@ let detectLoopActive = false;
 let folderHandle = null;
 let lastFrameData = null;
 
+/* helpers */
 function addMediaItem(name, blob){ const url = URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=name; a.textContent=name; $('mediaList').prepend(a); }
 function clearCanvas(){ const c=$('overlay'); c.getContext('2d').clearRect(0,0,c.width,c.height); }
-
 function averagePoint(idxs, landmarks){ let x=0,y=0,c=0; for(const i of idxs){ if(!landmarks[i]) continue; x+=landmarks[i][0]; y+=landmarks[i][1]; c++; } return [x/c,y/c]; }
 function computeEAR(upper, lower){ const v=(Math.hypot(upper[1][0]-lower[5][0], upper[1][1]-lower[5][1]) + Math.hypot(upper[2][0]-lower[4][0], upper[2][1]-lower[4][1]))/2; const h=Math.hypot(upper[0][0]-upper[3][0], upper[0][1]-upper[3][1])||1; return v/h; }
 function estimateYaw(landmarks){ const left=averagePoint([33,133,159,158],landmarks); const right=averagePoint([362,263,386,387],landmarks); const nose=landmarks[1]||[(left[0]+right[0])/2,(left[1]+right[1])/2]; const dxL=nose[0]-left[0]; const dxR=right[0]-nose[0]; return (dxL-dxR)*0.5; }
 function estimatePitch(landmarks){ const nose=landmarks[1]||[0,0]; const eyeCenter=averagePoint([33,133,362,263],landmarks); return (eyeCenter[1]-nose[1]); }
 
-/* Model accessor */
-function getModel(){ return window._faceModel || null; }
+/* folder picker */
+$('chooseFolderBtn').addEventListener('click', async ()=>{ if('showDirectoryPicker' in window){ try{ folderHandle = await window.showDirectoryPicker(); $('messages').textContent='Folder terpilih.'; }catch(e){ $('messages').textContent='Pemilihan folder dibatalkan.'; } } else $('messages').textContent='Browser tidak mendukung penyimpanan lokal otomatis. ZIP fallback akan digunakan.'; });
 
-/* Folder picker */
-$('chooseFolderBtn').addEventListener('click', async ()=>{
-  if('showDirectoryPicker' in window){
-    try{ folderHandle = await window.showDirectoryPicker(); $('messages').textContent='Folder terpilih.'; }catch(e){ $('messages').textContent='Pemilihan folder dibatalkan.'; }
-  } else $('messages').textContent='Browser tidak mendukung penyimpanan lokal otomatis. ZIP fallback akan digunakan.';
-});
-
-/* Start camera + recorder */
+/* start camera & record */
 async function startCameraAndRecord(){
   try{
     const s = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'}, audio:true});
     $('video').srcObject = s;
     streamRef = s;
     await $('video').play();
-    const c=$('overlay'); c.width = $('video').videoWidth || 640; c.height = $('video').videoHeight || 480;
-    // recorder + per-second capture
+    const c = $('overlay'); c.width = $('video').videoWidth || 640; c.height = $('video').videoHeight || 480;
     recordedBlobs = []; frameBlobs = []; lastFrameData = null;
     try{ recorder = new MediaRecorder(streamRef, {mimeType:'video/webm;codecs=vp9,opus'}); }catch(e){ recorder = new MediaRecorder(streamRef); }
-    recorder.ondataavailable = e=>{ if(e.data && e.data.size) recordedBlobs.push(e.data); };
+    recorder.ondataavailable = ev => { if(ev.data && ev.data.size) recordedBlobs.push(ev.data); };
     recorder.start();
     const capCanvas = document.createElement('canvas'); capCanvas.width = c.width; capCanvas.height = c.height;
     const capCtx = capCanvas.getContext('2d');
@@ -315,7 +333,7 @@ async function startCameraAndRecord(){
   }
 }
 
-/* STEPS */
+/* steps */
 const STEPS = [
   { id:'center', label:'Hadapkan muka ke tengah', validator: c=> Math.abs(c.avgYaw) < 8 && Math.abs(c.avgPitch) < 10, need: 3 },
   { id:'left', label:'Miring ke KIRI', validator: c=> c.avgYaw < -12, need: 3 },
@@ -326,6 +344,7 @@ const STEPS = [
 let currentStepIndex = 0;
 let yawBuf = [], pitchBuf = [], earBuf = [], lastBlinkTs = 0, consecutive = {};
 const MAX_TIME = 120;
+let detectLoopActive = false;
 
 async function detectLoop(){
   detectLoopActive = true;
@@ -337,28 +356,34 @@ async function detectLoop(){
   $('statusLine').textContent = 'Scanning...';
 
   while(detectLoopActive){
-    const modelInst = getModel();
+    const modelInst = window._faceModel;
     if(!modelInst){ await new Promise(r=>setTimeout(r,200)); continue; }
     try{
-      const preds = await modelInst.estimateFaces({input: v, returnTensors:false, flipHorizontal:true});
+      // modelInst may be detector or returned API from fld.load
+      const preds = await modelInst.estimateFaces({ input: v, returnTensors:false, flipHorizontal:true }).catch(async (e)=>{
+        // some detectors use slightly different signature (e.g. detector.estimateFaces(input))
+        try { return await modelInst.estimateFaces(v); } catch(err){ throw err; }
+      });
       ctx.clearRect(0,0,c.width,c.height);
 
       if(preds && preds.length>0){
-        const lm = preds[0].scaledMesh;
+        const lm = preds[0].scaledMesh || preds[0].keypoints || preds[0].landmarks || preds[0].positions;
+        // normalize landmarks shape if necessary — prefer scaledMesh
+        const landmarks = preds[0].scaledMesh ? preds[0].scaledMesh : (preds[0].keypoints ? preds[0].keypoints.map(k=>[k.x,k.y]) : (preds[0].landmarks ? preds[0].landmarks : (preds[0].positions ? preds[0].positions : [])));
         // draw
         ctx.fillStyle='rgba(6,182,212,0.9)';
-        for(let i=0;i<lm.length;i+=12){ ctx.beginPath(); ctx.arc(lm[i][0], lm[i][1], 1.2,0,Math.PI*2); ctx.fill(); }
+        for(let i=0;i<landmarks.length;i+=12){ ctx.beginPath(); ctx.arc(landmarks[i][0], landmarks[i][1], 1.2,0,Math.PI*2); ctx.fill(); }
         $('faceDetected').textContent='yes';
 
-        const Y = estimateYaw(lm);
-        const P = estimatePitch(lm);
+        const Y = estimateYaw(landmarks);
+        const P = estimatePitch(landmarks);
         yawBuf.push(Y); if(yawBuf.length>6) yawBuf.shift();
         pitchBuf.push(P); if(pitchBuf.length>6) pitchBuf.shift();
 
-        const leftUpper=[lm[159],lm[160],lm[158],lm[33]];
-        const leftLower=[lm[145],lm[144],lm[153],lm[133]];
-        const rightUpper=[lm[386],lm[387],lm[385],lm[362]];
-        const rightLower=[lm[374],lm[373],lm[380],lm[263]];
+        const leftUpper=[landmarks[159],landmarks[160],landmarks[158],landmarks[33]];
+        const leftLower=[landmarks[145],landmarks[144],landmarks[153],landmarks[133]];
+        const rightUpper=[landmarks[386],landmarks[387],landmarks[385],landmarks[362]];
+        const rightLower=[landmarks[374],landmarks[373],landmarks[380],landmarks[263]];
         const earL = computeEAR(leftUpper,leftLower);
         const earR = computeEAR(rightUpper,rightLower);
         const ear = (earL+earR)/2;
@@ -370,7 +395,7 @@ async function detectLoop(){
           if(b < 0.18 && cval >= 0.18 && (Date.now()-lastBlinkTs) > 400){ blinkNow=true; lastBlinkTs = Date.now(); }
         }
 
-        // motion (frame diff)
+        // motion
         const tmp = document.createElement('canvas'); tmp.width=c.width; tmp.height=c.height;
         const tctx = tmp.getContext('2d'); tctx.drawImage(v,0,0,tmp.width,tmp.height);
         const idata = tctx.getImageData(0,0,tmp.width,tmp.height);
@@ -388,7 +413,6 @@ async function detectLoop(){
         $('valBlink').textContent = blinkNow ? 'yes' : 'no';
         $('valMotion').textContent = motion.toFixed(1);
 
-        // validate step
         const step = STEPS[currentStepIndex];
         const ctxObj = { avgYaw, avgPitch, ear, earBuf, blinkNow, motion };
         const ok = step.validator(ctxObj);
@@ -415,12 +439,13 @@ async function detectLoop(){
             else { $('mainInstruction').textContent='Gerakkan kepala sedikit untuk verifikasi akhir'; await new Promise(r=>setTimeout(r,800)); if(lastFrameData && motion>8){ detectLoopActive=false; await finish(true); return; } else { detectLoopActive=false; await finish(false); return; } }
           }
         }
+
       } else {
         $('faceDetected').textContent='no';
         $('mainInstruction').textContent = STEPS[currentStepIndex].label;
       }
     }catch(e){
-      log('detectLoop error', e);
+      log('detectLoop error', e && e.message ? e.message : e);
     }
 
     const elapsed = Math.floor((Date.now() - startTime)/1000);
@@ -429,7 +454,7 @@ async function detectLoop(){
   }
 }
 
-/* finish + save (zip fallback) */
+/* finish/save */
 async function finish(success){
   $('statusLine').textContent = success ? 'Verifikasi: BERHASIL' : 'Verifikasi: GAGAL';
   clearInterval(captureInterval);
@@ -441,7 +466,6 @@ async function finish(success){
 
   const manifest = { result: success ? 'success' : 'failed', ts: Date.now(), frames_count: frameBlobs.length, video_size: videoBlob.size };
 
-  // try File System Access
   if(folderHandle && 'getDirectoryHandle' in folderHandle){
     try{
       const framesDir = await folderHandle.getDirectoryHandle('frames', {create:true});
@@ -455,7 +479,7 @@ async function finish(success){
       const wm = await mf.createWritable(); await wm.write(JSON.stringify(manifest,null,2)); await wm.close();
       $('messages').textContent = `Tersimpan ke folder lokal (${success ? 'success' : 'failed'}).`;
     }catch(e){
-      log('save to folder failed', e);
+      log('save to folder failed', e && e.message ? e.message : e);
       await saveAsZip(videoBlob, frameBlobs, manifest);
     }
   } else {
@@ -500,7 +524,7 @@ $('stopBtn').addEventListener('click', ()=>{
   $('statusLine').textContent='Dihentikan.';
 });
 
-/* cleanup on unload */
+/* cleanup */
 window.addEventListener('beforeunload', ()=>{ if(streamRef) streamRef.getTracks().forEach(t=>t.stop()); });
 </script>
 </body>
