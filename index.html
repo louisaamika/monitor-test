@@ -3,59 +3,64 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Scan Muka — Liveness (Immediate-step)</title>
+<title>Scan Muka — Debug Liveness</title>
 <style>
   :root{--bg:#071426;--card:#0b1220;--accent:#06b6d4;--text:#e6eef6}
-  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;color:var(--text);background:linear-gradient(180deg,#041024,#071428);display:flex;align-items:center;justify-content:center}
-  .frame{width:940px;max-width:96%;background:rgba(255,255,255,0.02);padding:18px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
-  h1{margin:0 0 8px 0;font-size:18px}
-  .layout{display:flex;gap:16px;flex-wrap:wrap}
-  .left{flex:1;min-width:280px}
-  video{width:100%;height:auto;border-radius:8px;background:#000;display:block}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;color:var(--text);background:linear-gradient(180deg,#041024,#071428);display:flex;align-items:flex-start;justify-content:center;padding:18px}
+  .frame{width:980px;max-width:98%;background:rgba(255,255,255,0.02);padding:16px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  h1{margin:0 0 10px 0;font-size:18px}
+  .layout{display:flex;gap:14px;flex-wrap:wrap}
+  .left{flex:1;min-width:320px}
+  .right{width:360px}
+  .video-wrap{position:relative;background:#000;border-radius:8px;overflow:hidden}
+  video{width:100%;height:auto;display:block}
   canvas{position:absolute;left:0;top:0;pointer-events:none}
   .instr{background:#061423;padding:10px;border-radius:8px;margin-top:10px;font-size:14px}
-  .controls{margin-top:12px}
+  .controls{margin-top:10px}
   button{background:var(--accent);color:#022;padding:10px 14px;border-radius:8px;border:0;cursor:pointer;font-weight:700}
-  .status{margin-top:10px;font-size:14px}
-  .hidden{display:none}
-  .right{width:320px;min-width:220px}
-  .small{font-size:13px;color:#9fb5c1}
-  .media-list{margin-top:10px;max-height:260px;overflow:auto;font-size:13px}
-  .media-list a{color:var(--accent);display:block;margin-bottom:6px}
-  .step-ok{color:#7ef0b6;font-weight:700}
+  .small{font-size:13px;color:#9fb5c1;margin-top:6px}
+  .debug{background:#061322;padding:10px;border-radius:8px;margin-top:10px;font-size:13px;line-height:1.4}
+  .ok{color:#7ef0b6;font-weight:700}
+  .warn{color:#ffd36b;font-weight:700}
+  .err{color:#ff8b8b;font-weight:700}
+  .media-list{margin-top:8px;max-height:220px;overflow:auto}
+  a{color:var(--accent)}
 </style>
 </head>
 <body>
   <div class="frame">
-    <h1>Scan Muka — Liveness (Immediate-step)</h1>
+    <h1>Scan Muka — Debug Liveness</h1>
     <div class="layout">
       <div class="left">
-        <div style="position:relative;">
+        <div class="video-wrap">
           <video id="video" autoplay playsinline muted></video>
           <canvas id="overlay"></canvas>
         </div>
 
-        <div class="instr" id="instructions">
-          Ikuti instruksi yang muncul pada layar.
-        </div>
+        <div class="instr" id="mainInstruction">Instruksi: Tekan <strong>Mulai Scan</strong></div>
 
         <div class="controls">
           <button id="startBtn">Mulai Scan</button>
-          <button id="stopBtn" class="hidden">Stop</button>
+          <button id="stopBtn" style="display:none">Stop</button>
+          <button id="chooseFolderBtn">Pilih Folder Simpan (opsional)</button>
         </div>
 
-        <div class="status" id="statusLine">Status: idle</div>
+        <div class="small" id="statusLine">Status: idle</div>
       </div>
 
       <aside class="right">
-        <div class="instr"><strong>Detail</strong>
-          <div class="small" id="detail">Menunggu</div>
-          <div class="small" id="timer">Waktu tersisa: 120s</div>
-          <div class="small" id="progress">Progress: 0/5</div>
-          <div class="small" id="guidance">Instruksi: -</div>
-          <div style="margin-top:8px">
-            <button id="chooseFolderBtn">Pilih Folder Simpan (direkomendasikan)</button>
-          </div>
+        <div class="debug">
+          <div><strong>Model status:</strong> <span id="modelStatus" class="warn">loading...</span></div>
+          <div><strong>Face detected:</strong> <span id="faceDetected" class="err">no</span></div>
+          <div><strong>Step:</strong> <span id="stepLabel">-</span> (<span id="progress">0/5</span>)</div>
+          <hr style="border:none;border-top:1px solid rgba(255,255,255,0.04);margin:8px 0">
+          <div><strong>yaw</strong>: <span id="valYaw">-</span></div>
+          <div><strong>pitch</strong>: <span id="valPitch">-</span></div>
+          <div><strong>EAR</strong>: <span id="valEAR">-</span></div>
+          <div><strong>blinkNow</strong>: <span id="valBlink">-</span></div>
+          <div><strong>motion</strong>: <span id="valMotion">-</span></div>
+          <hr style="border:none;border-top:1px solid rgba(255,255,255,0.04);margin:8px 0">
+          <div id="messages" class="small">Messages appear here.</div>
         </div>
 
         <div class="instr" style="margin-top:10px">
@@ -66,17 +71,14 @@
     </div>
   </div>
 
-<!-- libs -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.7.1/jszip.min.js"></script>
-
 <script>
 /* CONFIG */
 const MAX_TIME = 120;
 const FPS_CAPTURE_MS = 1000;
 const EAR_BLINK_THRESHOLD = 0.18;
-const CONSECUTIVE_REQUIRED = 4; // jumlah frame berturut2 sebelum step dianggap valid
+const CONSECUTIVE_REQUIRED = 4;
 const BLINK_COOLDOWN_MS = 400;
 
 /* DOM */
@@ -86,12 +88,19 @@ const ctx = overlay.getContext('2d');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
 const chooseFolderBtn = document.getElementById('chooseFolderBtn');
-const detail = document.getElementById('detail');
-const timerEl = document.getElementById('timer');
+const modelStatus = document.getElementById('modelStatus');
+const faceDetectedEl = document.getElementById('faceDetected');
+const stepLabel = document.getElementById('stepLabel');
 const progressEl = document.getElementById('progress');
-const guidanceEl = document.getElementById('guidance');
-const statusLine = document.getElementById('statusLine');
+const valYaw = document.getElementById('valYaw');
+const valPitch = document.getElementById('valPitch');
+const valEAR = document.getElementById('valEAR');
+const valBlink = document.getElementById('valBlink');
+const valMotion = document.getElementById('valMotion');
+const messages = document.getElementById('messages');
+const mainInstruction = document.getElementById('mainInstruction');
 const mediaList = document.getElementById('mediaList');
+const statusLine = document.getElementById('statusLine');
 
 let model = null;
 let streamRef = null;
@@ -99,20 +108,30 @@ let recorder = null;
 let recordedBlobs = [];
 let frameBlobs = [];
 let captureInterval = null;
-let detectLoopActive = false;
+let lastFrameData = null;
 let folderHandle = null;
 
-/* load model */
-statusLine.innerText = 'Memuat model...';
-(async ()=>{
+/* load model with timeout & error reporting */
+async function loadModel(){
+  modelStatus.textContent = 'loading...';
   try{
+    // force webgl backend if available for speed
+    if(tf && tf.setBackend) {
+      try{ await tf.setBackend('webgl'); }catch(e){ /* continue */ }
+    }
     model = await faceLandmarksDetection.load(faceLandmarksDetection.SupportedPackages.mediapipeFacemesh, {maxFaces:1});
-    statusLine.innerText = 'Model siap.';
-  }catch(e){
-    console.error(e);
-    statusLine.innerText = 'Gagal memuat model.';
+    modelStatus.textContent = 'ready';
+    modelStatus.className = 'ok';
+    messages.textContent = 'Model siap. Tekan Mulai Scan.';
+  }catch(err){
+    model = null;
+    modelStatus.textContent = 'failed';
+    modelStatus.className = 'err';
+    messages.textContent = 'Gagal memuat model: ' + (err && err.message ? err.message : String(err));
+    console.error('model load error', err);
   }
-})();
+}
+loadModel();
 
 /* helpers */
 function addMediaItem(name, blob){
@@ -148,9 +167,6 @@ function estimatePitch(landmarks){
   const eyeCenter = averagePoint([33,133,362,263], landmarks);
   return (eyeCenter[1] - nose[1]);
 }
-
-/* frame diff */
-let lastFrameData = null;
 function computeFrameDiff(imgData){
   if(!lastFrameData){ lastFrameData = imgData; return 0; }
   let diff=0;
@@ -168,16 +184,16 @@ chooseFolderBtn.addEventListener('click', async ()=>{
   if('showDirectoryPicker' in window){
     try{
       folderHandle = await window.showDirectoryPicker();
-      detail.innerText = 'Folder terpilih.';
+      messages.textContent = 'Folder terpilih: Anda dapat menyimpan hasil ke folder ini.';
     }catch(e){
-      detail.innerText = 'Pemilihan folder dibatalkan.';
+      messages.textContent = 'Pemilihan folder dibatalkan.';
     }
   } else {
-    detail.innerText = 'Browser tidak mendukung penyimpanan lokal otomatis. ZIP fallback akan digunakan.';
+    messages.textContent = 'Browser tidak mendukung penyimpanan lokal otomatis. ZIP fallback akan digunakan.';
   }
 });
 
-/* camera */
+/* camera start */
 async function startCamera(){
   const s = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'}, audio:true});
   video.srcObject = s;
@@ -188,110 +204,82 @@ async function startCamera(){
   return s;
 }
 
-/* STEP MACHINE: instructions array with validators */
+/* step machine */
 const STEPS = [
-  { id:'center', label:'Hadapkan muka ke tengah', validator: s_center },
-  { id:'left', label:'Miring ke KIRI', validator: s_left },
-  { id:'right', label:'Miring ke KANAN', validator: s_right },
-  { id:'blink', label:'Kedipkan mata', validator: s_blink },
-  { id:'nod', label:'Angguk kepala', validator: s_nod }
+  { id:'center', label:'Hadapkan muka ke tengah', validator: c=> Math.abs(c.avgYaw) < 8 && Math.abs(c.avgPitch) < 10, need: 3 },
+  { id:'left', label:'Miring ke KIRI', validator: c=> c.avgYaw < -12, need: 3 },
+  { id:'right', label:'Miring ke KANAN', validator: c=> c.avgYaw > 12, need: 3 },
+  { id:'blink', label:'Kedipkan mata', validator: c=> c.blinkNow === true, need: 1 },
+  { id:'nod', label:'Angguk kepala', validator: c=> Math.abs(c.avgPitch) > 12, need: 3 }
 ];
-let currentStepIndex = 0;
+let current = 0;
+let yawBuf = [], pitchBuf = [], earBuf = [], lastBlinkTs = 0, consecutive = {};
 
-/* state buffers for immediate-step checking */
-let yawBuf = [];
-let pitchBuf = [];
-let earBuf = [];
-let lastBlinkTs = 0;
-let consecutiveCounts = {center:0,left:0,right:0,blink:0,nod:0};
-
-/* validator implementations (operate on landmarks & computed values) */
-function s_center(context){
-  // center if avg yaw small
-  return Math.abs(context.avgYaw) < 8 && Math.abs(context.avgPitch) < 10;
-}
-function s_left(context){
-  return context.avgYaw < -12;
-}
-function s_right(context){
-  return context.avgYaw > 12;
-}
-function s_blink(context){
-  // blink detected by ear drop then rise; implement by comparing recent ear minima
-  // return true if a blink edge was observed in this frame (context.blinkNow)
-  return context.blinkNow === true;
-}
-function s_nod(context){
-  return Math.abs(context.avgPitch) > 12;
-}
-
-/* MAIN: start button */
+/* start scan */
 startBtn.addEventListener('click', async ()=>{
-  startBtn.classList.add('hidden');
-  stopBtn.classList.remove('hidden');
-  statusLine.innerText = 'Memulai...';
-  guidanceEl.innerText = 'Meminta akses kamera...';
-  detail.innerText = 'Izinkan akses kamera jika diminta.';
+  startBtn.style.display = 'none';
+  stopBtn.style.display = 'inline-block';
+  statusLine.textContent = 'Memulai...';
+  mainInstruction.textContent = 'Izinkan kamera jika diminta.';
+  messages.textContent = '';
 
-  try{ await startCamera(); } catch(e){
-    console.error(e);
-    statusLine.innerText = 'Gagal akses kamera';
-    startBtn.classList.remove('hidden');
-    stopBtn.classList.add('hidden');
+  try{
+    await startCamera();
+  }catch(err){
+    messages.textContent = 'Gagal akses kamera: ' + (err.message || err);
+    startBtn.style.display = 'inline-block';
+    stopBtn.style.display = 'none';
     return;
   }
 
-  // prepare recorder & capture
-  recordedBlobs = []; frameBlobs = [];
-  try{ recorder = new MediaRecorder(streamRef, {mimeType:'video/webm;codecs=vp9,opus'}); } catch(e){ recorder = new MediaRecorder(streamRef); }
-  recorder.ondataavailable = ev => { if(ev.data && ev.data.size) recordedBlobs.push(ev.data); };
+  // recorder + frame capture
+  recordedBlobs = []; frameBlobs = []; lastFrameData = null;
+  try{ recorder = new MediaRecorder(streamRef, {mimeType:'video/webm;codecs=vp9,opus'}); }catch(e){ recorder = new MediaRecorder(streamRef); }
+  recorder.ondataavailable = e=>{ if(e.data && e.data.size) recordedBlobs.push(e.data); };
   recorder.start();
-
-  const capCanvas = document.createElement('canvas');
-  capCanvas.width = overlay.width; capCanvas.height = overlay.height;
+  const capCanvas = document.createElement('canvas'); capCanvas.width = overlay.width; capCanvas.height = overlay.height;
   const capCtx = capCanvas.getContext('2d');
   captureInterval = setInterval(()=>{
     capCtx.drawImage(video,0,0,capCanvas.width,capCanvas.height);
     capCanvas.toBlob(b=>{
-      const ts = Date.now();
-      const name = `frame_${ts}.png`;
-      frameBlobs.push({blob:b,name});
-      addMediaItem(name,b);
+      const ts = Date.now(); const name = `frame_${ts}.png`; frameBlobs.push({blob:b,name}); addMediaItem(name,b);
     }, 'image/png');
   }, FPS_CAPTURE_MS);
 
-  // reset state
-  currentStepIndex = 0;
-  yawBuf = []; pitchBuf = []; earBuf = []; lastBlinkTs = 0;
-  consecutiveCounts = {center:0,left:0,right:0,blink:0,nod:0};
-  guidanceEl.innerText = STEPS[currentStepIndex].label;
-  progressEl.innerText = `Progress: 0/${STEPS.length}`;
-  statusLine.innerText = 'Scanning...';
+  // reset
+  current = 0; yawBuf=[]; pitchBuf=[]; earBuf=[]; lastBlinkTs=0; consecutive={};
+  STEPS.forEach(s=>consecutive[s.id]=0);
+  statusLine.textContent = 'Scanning...';
+  mainInstruction.textContent = STEPS[current].label;
+  stepLabel.textContent = STEPS[current].label;
+  progressEl.textContent = `0/${STEPS.length}`;
+  detectLoop();
+});
+
+/* detection loop */
+let detectLoopActive = false;
+async function detectLoop(){
   detectLoopActive = true;
-
   const startTime = Date.now();
-
   async function loop(){
     if(!detectLoopActive) return;
-
-    const preds = model ? await model.estimateFaces({input:video, returnTensors:false, flipHorizontal:true}) : [];
+    if(!model){ messages.textContent = 'Model belum siap.'; requestAnimationFrame(loop); return; }
+    const preds = await model.estimateFaces({input:video, returnTensors:false, flipHorizontal:true});
     clearCanvas();
 
     if(preds && preds.length>0){
-      const p = preds[0];
-      const lm = p.scaledMesh;
-
-      // visual: small landmarks
+      faceDetectedEl.textContent = 'yes'; faceDetectedEl.className = 'ok';
+      const p = preds[0]; const lm = p.scaledMesh;
+      // draw small points
       ctx.fillStyle = 'rgba(6,182,212,0.9)';
       for(let i=0;i<lm.length;i+=10){ ctx.beginPath(); ctx.arc(lm[i][0], lm[i][1], 1.2,0,Math.PI*2); ctx.fill(); }
 
-      // compute values
-      const yaw = estimateYaw(lm);
-      const pitch = estimatePitch(lm);
-      yawBuf.push(yaw); if(yawBuf.length>CONSECUTIVE_REQUIRED) yawBuf.shift();
-      pitchBuf.push(pitch); if(pitchBuf.length>CONSECUTIVE_REQUIRED) pitchBuf.shift();
+      // values
+      const yaw = estimateYaw(lm); const pitch = estimatePitch(lm);
+      yawBuf.push(yaw); if(yawBuf.length>5) yawBuf.shift();
+      pitchBuf.push(pitch); if(pitchBuf.length>5) pitchBuf.shift();
 
-      // EAR & blink detection
+      // ear
       const leftUpper = [lm[159], lm[160], lm[158], lm[33]];
       const leftLower = [lm[145], lm[144], lm[153], lm[133]];
       const rightUpper = [lm[386], lm[387], lm[385], lm[362]];
@@ -301,166 +289,138 @@ startBtn.addEventListener('click', async ()=>{
       const ear = (earL+earR)/2;
       earBuf.push(ear); if(earBuf.length>8) earBuf.shift();
 
-      // simple blink edge detection: look for a dip then rise
+      // blink detection (edge)
       let blinkNow = false;
       if(earBuf.length >= 3){
-        const len = earBuf.length;
-        const prev = earBuf[len-2];
-        const last = earBuf[len-1];
-        // detect rise after dip: prev < threshold and last >= threshold (edge)
-        if(prev < EAR_BLINK_THRESHOLD && last >= EAR_BLINK_THRESHOLD && (Date.now()-lastBlinkTs) > BLINK_COOLDOWN_MS){
+        const a = earBuf[earBuf.length-3], b = earBuf[earBuf.length-2], c = earBuf[earBuf.length-1];
+        // detect dip then rise
+        if(b < EAR_BLINK_THRESHOLD && c >= EAR_BLINK_THRESHOLD && (Date.now()-lastBlinkTs) > BLINK_COOLDOWN_MS){
           blinkNow = true; lastBlinkTs = Date.now();
         }
       }
 
-      // compute averaged context
+      // motion
+      const tmp = document.createElement('canvas'); tmp.width = overlay.width; tmp.height = overlay.height;
+      const tctx = tmp.getContext('2d'); tctx.drawImage(video,0,0,tmp.width,tmp.height);
+      const id = tctx.getImageData(0,0,tmp.width,tmp.height);
+      const motion = computeFrameDiff(id);
+
+      // context
       const avgYaw = yawBuf.reduce((a,b)=>a+b,0)/yawBuf.length;
       const avgPitch = pitchBuf.reduce((a,b)=>a+b,0)/pitchBuf.length;
+      valYaw.textContent = avgYaw.toFixed(2);
+      valPitch.textContent = avgPitch.toFixed(2);
+      valEAR.textContent = ear.toFixed(3);
+      valBlink.textContent = blinkNow ? 'yes' : 'no';
+      valMotion.textContent = motion.toFixed(1);
 
-      // check current step's validator immediately
-      const context = {avgYaw, avgPitch, ear, earBuf, blinkNow};
-      const step = STEPS[currentStepIndex];
-      const valid = step.validator(context);
-
-      // require several consecutive confirmations for yaw/pitch/nod/center to reduce flicker
-      const id = step.id;
-      if(id !== 'blink'){
-        if(valid) consecutiveCounts[id] = Math.min(CONSECUTIVE_REQUIRED, consecutiveCounts[id] + 1);
-        else consecutiveCounts[id] = 0;
+      // current step check
+      const step = STEPS[current];
+      stepLabel.textContent = step.label;
+      const ctxObj = { avgYaw, avgPitch, ear, earBuf, blinkNow, motion };
+      const ok = step.validator(ctxObj);
+      if(step.id !== 'blink'){
+        if(ok) consecutive[step.id] = Math.min(CONSECUTIVE_REQUIRED, consecutive[step.id] + 1);
+        else consecutive[step.id] = 0;
+        mainInstruction.textContent = `${step.label} (${consecutive[step.id]}/${step.need})`;
       } else {
-        // blink accepts single blink event
-        if(valid) consecutiveCounts[id] = 1;
+        if(ok) consecutive[step.id] = 1;
+        mainInstruction.textContent = `${step.label} (${consecutive[step.id]}/${step.need})`;
       }
 
-      // show guidance & detail
-      guidanceEl.innerText = step.label + (consecutiveCounts[id] > 0 ? `  ✓ (${consecutiveCounts[id]}/${CONSECUTIVE_REQUIRED})` : '');
-      detail.innerText = `yaw≈${avgYaw.toFixed(1)}, pitch≈${avgPitch.toFixed(1)}, EAR=${ear.toFixed(3)}`;
-
-      // if meets required consecutive, advance immediate to next step
-      const needed = (id==='blink' ? 1 : CONSECUTIVE_REQUIRED);
-      if(consecutiveCounts[id] >= needed){
-        // mark step done visually
-        guidanceEl.innerText = `${step.label} — OK`;
-        currentStepIndex++;
-        // update progress
-        progressEl.innerText = `Progress: ${currentStepIndex}/${STEPS.length}`;
-        // small UX pause then next instruction (immediate)
-        if(currentStepIndex < STEPS.length){
-          guidanceEl.innerText = `Berhasil: ${step.label}. Lanjut: ${STEPS[currentStepIndex].label}`;
-          // reset consecutive buffer for next step
-          consecutiveCounts = {center:0,left:0,right:0,blink:0,nod:0};
-          // next step will be checked on next frames
+      // advance
+      if(consecutive[step.id] >= step.need){
+        // mark done
+        mainInstruction.textContent = `${step.label} — OK`;
+        current++;
+        progressEl.textContent = `${current}/${STEPS.length}`;
+        if(current < STEPS.length){
+          stepLabel.textContent = STEPS[current].label;
+          mainInstruction.textContent = `Berhasil: melanjutkan → ${STEPS[current].label}`;
+          // reset small buffers for next step
+          yawBuf = []; pitchBuf = []; earBuf = [];
+          Object.keys(consecutive).forEach(k=>consecutive[k]=0);
+          await new Promise(r=>setTimeout(r,600)); // small pause
         } else {
-          // all steps done — verify motion to avoid replay attacks
-          // compute motion
-          const tmp = document.createElement('canvas'); tmp.width = overlay.width; tmp.height = overlay.height;
-          const tctx = tmp.getContext('2d'); tctx.drawImage(video,0,0,tmp.width,tmp.height);
-          const idata = tctx.getImageData(0,0,tmp.width,tmp.height);
-          const motion = computeFrameDiff(idata);
+          // all done — verify motion, then finish
           if(motion > 8){
             detectLoopActive = false;
-            await finish(true, {startTime:Date.now(), endTime:Date.now(), stepsDone:true});
+            await finish(true);
             return;
           } else {
-            // insufficient motion -> require a small head movement then complete
-            guidanceEl.innerText = 'Gerakkan kepala sedikit (untuk verifikasi) ...';
+            mainInstruction.textContent = 'Silakan gerakkan kepala sedikit untuk verifikasi akhir';
+            // wait for some motion
+            let waited=0;
+            while(waited < 3000){
+              await new Promise(r=>setTimeout(r,250)); waited+=250;
+            }
+            // after wait, re-evaluate motion using lastFrameData
+            if(lastFrameData && computeFrameDiff(lastFrameData) > 8){
+              detectLoopActive = false;
+              await finish(true);
+              return;
+            } else {
+              detectLoopActive = false;
+              await finish(false);
+              return;
+            }
           }
         }
       }
     } else {
-      detail.innerText = 'Wajah tidak terdeteksi.';
-      guidanceEl.innerText = STEPS[currentStepIndex].label;
+      faceDetectedEl.textContent = 'no'; faceDetectedEl.className = 'err';
+      mainInstruction.textContent = STEPS[current].label;
+      valYaw.textContent = '-'; valPitch.textContent='-'; valEAR.textContent='-'; valBlink.textContent='-'; valMotion.textContent='-';
     }
 
-    // timer
+    // time out
     const elapsed = Math.floor((Date.now() - startTime)/1000);
-    const remain = MAX_TIME - elapsed;
-    timerEl.innerText = `Waktu tersisa: ${remain}s`;
-    if(remain <= 0){
+    if(elapsed >= MAX_TIME){
       detectLoopActive = false;
-      await finish(false, {startTime:Date.now(), endTime:Date.now(), stepsDone:false});
+      await finish(false);
       return;
     }
 
     requestAnimationFrame(loop);
   }
-
   loop();
-});
+}
 
-/* stop */
+/* stop handler */
 stopBtn.addEventListener('click', ()=>{
   cleanup(true);
 });
 
-/* cleanup */
 function cleanup(showStart){
   detectLoopActive = false;
   clearInterval(captureInterval);
-  if(recorder && recorder.state !== 'inactive'){ try{ recorder.stop(); }catch(e){} }
+  if(recorder && recorder.state !== 'inactive') try{ recorder.stop(); }catch(e){}
   if(streamRef){ streamRef.getTracks().forEach(t=>t.stop()); streamRef=null; }
-  if(showStart){ startBtn.classList.remove('hidden'); stopBtn.classList.add('hidden'); statusLine.innerText='Dihentikan.'; }
+  if(showStart){ startBtn.style.display = 'inline-block'; stopBtn.style.display = 'none'; statusLine.textContent = 'Dihentikan.'; }
 }
 
-/* finish: save & redirect or retry */
-async function finish(success, data){
-  statusLine.innerText = success ? 'Verifikasi: BERHASIL' : 'Verifikasi: GAGAL';
-  // stop everything
+/* finish: save minimal then redirect or retry */
+async function finish(success){
+  statusLine.textContent = success ? 'Verifikasi: BERHASIL' : 'Verifikasi: GAGAL';
   clearInterval(captureInterval);
-  if(recorder && recorder.state !== 'inactive'){ try{ recorder.stop(); }catch(e){} }
+  if(recorder && recorder.state !== 'inactive') try{ recorder.stop(); }catch(e){}
   if(streamRef){ streamRef.getTracks().forEach(t=>t.stop()); streamRef=null; }
 
+  // minimal save: create video blob and manifest (ZIP fallback omitted for brevity in debug)
   const videoBlob = new Blob(recordedBlobs, {type: recordedBlobs[0]?.type || 'video/webm'});
-  const manifest = { result: success ? 'success' : 'failed', ts: Date.now(), steps_count: currentStepIndex, frames_count: frameBlobs.length, video_size: videoBlob.size };
-
-  // try save to chosen folder with frames/ subfolder; fallback to ZIP if not supported
-  if(folderHandle && 'getDirectoryHandle' in folderHandle){
-    try{
-      const framesDir = await folderHandle.getDirectoryHandle('frames', {create:true});
-      const vHandle = await folderHandle.getFileHandle(`scan_result_${manifest.ts}.webm`, {create:true});
-      const wv = await vHandle.createWritable(); await wv.write(videoBlob); await wv.close();
-      addMediaItem(`scan_result_${manifest.ts}.webm`, videoBlob);
-      for(const f of frameBlobs){
-        const fh = await framesDir.getFileHandle(f.name, {create:true});
-        const wf = await fh.createWritable(); await wf.write(f.blob); await wf.close();
-      }
-      const mf = await folderHandle.getFileHandle(`manifest_${manifest.ts}.json`, {create:true});
-      const wm = await mf.createWritable(); await wm.write(JSON.stringify(manifest,null,2)); await wm.close();
-      detail.innerText = `Tersimpan ke folder lokal (${success ? 'success' : 'failed'}).`;
-    }catch(e){
-      console.error(e);
-      await saveAsZip(videoBlob, frameBlobs, manifest);
-    }
-  } else {
-    await saveAsZip(videoBlob, frameBlobs, manifest);
-  }
+  addMediaItem('scan_debug_video.webm', videoBlob);
 
   if(success){
-    setTimeout(()=>{ window.location.href = `result.html?result=success&ts=${manifest.ts}`; }, 700);
+    setTimeout(()=>{ window.location.href = `result.html?result=success&ts=${Date.now()}`; }, 700);
   } else {
-    // show start button again for retry
-    startBtn.classList.remove('hidden');
-    stopBtn.classList.add('hidden');
-    statusLine.innerText = 'Gagal. Tekan Mulai Scan untuk ulang.';
+    startBtn.style.display = 'inline-block'; stopBtn.style.display = 'none';
+    messages.textContent = 'Verifikasi gagal — coba ulang. Perhatikan instruksi di sebelah kanan.';
   }
 }
 
-/* zip fallback */
-async function saveAsZip(videoBlob, frames, manifest){
-  const zip = new JSZip();
-  if(videoBlob && videoBlob.size>0) zip.file(`scan_result_${manifest.ts}.webm`, videoBlob);
-  const fdir = zip.folder('frames');
-  for(const f of frames) fdir.file(f.name, f.blob);
-  zip.file(`manifest_${manifest.ts}.json`, JSON.stringify(manifest,null,2));
-  const content = await zip.generateAsync({type:'blob'});
-  const url = URL.createObjectURL(content);
-  const a = document.createElement('a'); a.href = url; a.download = `scan_media_${manifest.ts}.zip`; a.click();
-  URL.revokeObjectURL(url);
-  detail.innerText = 'Hasil disimpan sebagai ZIP (fallback).';
-}
-
-/* unload cleanup */
+/* auto-clean when leaving */
 window.addEventListener('beforeunload', ()=>{ if(streamRef) streamRef.getTracks().forEach(t=>t.stop()); });
+
 </script>
 </body>
 </html>
