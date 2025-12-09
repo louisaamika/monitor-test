@@ -1,449 +1,107 @@
 <!doctype html>
 <html lang="id">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Scan Muka — Final (Self-contained tries)</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>SCAN DIAGNOSTIC</title>
 <style>
-  :root{--bg:#071426;--card:#0b1220;--accent:#06b6d4;--text:#e6eef6}
-  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;color:var(--text);background:linear-gradient(180deg,#041024,#071428);display:flex;align-items:flex-start;justify-content:center;padding:18px}
-  .frame{width:980px;max-width:98%;background:rgba(255,255,255,0.02);padding:16px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
-  h1{margin:0 0 10px 0;font-size:18px}
-  .layout{display:flex;gap:14px;flex-wrap:wrap}
-  .left{flex:1;min-width:320px}
-  .right{width:360px}
-  .video-wrap{position:relative;background:#000;border-radius:8px;overflow:hidden}
-  video{width:100%;height:auto;display:block}
-  canvas{position:absolute;left:0;top:0;pointer-events:none}
-  .instr{background:#061423;padding:10px;border-radius:8px;margin-top:10px;font-size:14px}
-  .controls{margin-top:10px}
-  button{background:var(--accent);color:#022;padding:10px 14px;border-radius:8px;border:0;cursor:pointer;font-weight:700}
-  .small{font-size:13px;color:#9fb5c1;margin-top:6px}
-  .debug{background:#061322;padding:10px;border-radius:8px;margin-top:10px;font-size:13px;line-height:1.4}
-  .ok{color:#7ef0b6;font-weight:700}
-  .warn{color:#ffd36b;font-weight:700}
-  .err{color:#ff8b8b;font-weight:700}
-  .media-list{margin-top:8px;max-height:220px;overflow:auto}
-  a{color:var(--accent)}
-  .log { max-height:160px; overflow:auto; font-size:12px; color:#cbe; background:rgba(255,255,255,0.01); padding:8px; border-radius:6px; margin-top:8px; }
+  body{font-family:Arial;background:#071428;color:#e6eef6;margin:0;padding:20px}
+  .card{background:#0d1528;padding:14px;border-radius:10px;max-width:900px;margin:auto}
+  .log{white-space:pre-wrap;font-size:12px;background:#0003;padding:10px;border-radius:8px;height:300px;overflow:auto}
+  button{background:#06b6d4;color:#012;border:0;padding:10px 14px;border-radius:8px;margin-top:12px}
 </style>
-
-<!-- NOTE: we intentionally do NOT load tf/model here as a single guaranteed way.
-     The script below will attempt multiple strategies (ESM, script tag, fetch+eval). -->
 </head>
 <body>
-  <div class="frame">
-    <h1>Scan Muka — Self-contained loader</h1>
+<div class="card">
+  <h2>SCAN DIAGNOSTIC</h2>
+  <p>Semua tes loader CDN akan muncul di bawah.</p>
 
-    <div class="layout">
-      <div class="left">
-        <div class="video-wrap">
-          <video id="video" autoplay playsinline muted></video>
-          <canvas id="overlay"></canvas>
-        </div>
+  <div><strong>Loader Status:</strong> <span id="loaderStatus">Running tests…</span></div>
+  <div><strong>TF.js Detected:</strong> <span id="tfStatus">-</span></div>
+  <div><strong>FaceLandmarks Detected:</strong> <span id="fldStatus">-</span></div>
 
-        <div class="instr" id="mainInstruction">Instruksi: Tekan <strong>Mulai Scan</strong></div>
+  <h3>Loader Diagnostic Log (copy/screenshot kirim ke saya)</h3>
+  <div class="log" id="log"></div>
 
-        <div class="controls">
-          <button id="startBtn">Mulai Scan</button>
-          <button id="stopBtn" style="display:none">Stop</button>
-          <button id="chooseFolderBtn">Pilih Folder Simpan (opsional)</button>
-        </div>
-
-        <div class="small" id="statusLine">Status: idle</div>
-      </div>
-
-      <aside class="right">
-        <div class="debug">
-          <div><strong>Loader status:</strong> <span id="loaderStatus" class="warn">initializing...</span></div>
-          <div><strong>Model status:</strong> <span id="modelStatus" class="warn">waiting</span></div>
-          <div><strong>Face detected:</strong> <span id="faceDetected" class="err">no</span></div>
-          <div style="margin-top:6px"><strong>Step:</strong> <span id="stepLabel">-</span> (<span id="progress">0/5</span>)</div>
-
-          <hr style="border:none;border-top:1px solid rgba(255,255,255,0.04);margin:8px 0">
-
-          <div><strong>yaw</strong>: <span id="valYaw">-</span></div>
-          <div><strong>pitch</strong>: <span id="valPitch">-</span></div>
-          <div><strong>EAR</strong>: <span id="valEAR">-</span></div>
-          <div><strong>blinkNow</strong>: <span id="valBlink">-</span></div>
-          <div><strong>motion</strong>: <span id="valMotion">-</span></div>
-
-          <hr style="border:none;border-top:1px solid rgba(255,255,255,0.04);margin:8px 0">
-
-          <div id="messages" class="small">Messages appear here.</div>
-          <div class="log" id="log"></div>
-        </div>
-
-        <div class="instr" style="margin-top:10px">
-          <strong>Media (preview)</strong>
-          <div class="media-list" id="mediaList"></div>
-        </div>
-      </aside>
-    </div>
-  </div>
+  <button onclick="location.reload()">Reload Test</button>
+</div>
 
 <script>
-/* Config */
-const TF_CDN = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js';
-const FLD_ESM = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.esm.js';
-const FLD_UMD = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.min.js';
-
-const $ = id => document.getElementById(id);
-const logEl = $('log');
-function log(...args){ console.log(...args); logEl.innerHTML = (new Date()).toISOString() + ' — ' + args.map(a=> (typeof a==='object' ? JSON.stringify(a) : String(a))).join(' ') + '<br>' + logEl.innerHTML; }
-
-/* UI refs */
-const loaderStatus = $('loaderStatus');
-const modelStatus = $('modelStatus');
-const messages = $('messages');
-const faceDetectedEl = $('faceDetected');
-const mainInstruction = $('mainInstruction');
-const mediaList = $('mediaList');
-
-/* runtime state */
-let model = null;
-let streamRef = null;
-let recorder = null;
-let recordedBlobs = [];
-let frameBlobs = [];
-let overlayCtx = null;
-let lastFrameData = null;
-let folderHandle = null;
-
-/* small helper to inject a remote script tag and wait for load/error */
-function loadScriptTag(url){
-  return new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = url;
-    s.async = true;
-    s.onload = () => resolve();
-    s.onerror = (e) => reject(new Error('script load failed: ' + url));
-    document.head.appendChild(s);
-  });
+const logEl = document.getElementById("log");
+function log(msg){
+  console.log(msg);
+  logEl.textContent += msg + "\n";
 }
 
-/* Strategy: (1) ensure tf exists, (2) try ESM import for face-landmarks, (3) try script tag UMD,
-   (4) try fetch+eval of UMD source, (5) fail with clear message.
-   This lets you keep using only these two HTML files. */
-async function ensureLibraries(){
-  loaderStatus.textContent = 'starting';
-  try{
-    // 1) ensure tf available: attempt to load tf if not present
-    if(!window.tf){
-      loaderStatus.textContent = 'loading tf.js';
-      log('Loading tf.js from CDN...');
-      await loadScriptTag(TF_CDN);
-      log('tf loaded:', !!window.tf);
-    } else {
-      log('tf already present');
+const TF = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js";
+const ESM = "https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.esm.js";
+const UMD = "https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.min.js";
+
+document.getElementById("loaderStatus").textContent = "Running…";
+
+(async () => {
+  log("=== TEST 1: FETCH HEAD ===");
+  async function testHead(url,name){
+    try{
+      const r = await fetch(url,{method:"HEAD"});
+      log(name + " → status " + r.status);
+      return r.status;
+    }catch(e){
+      log(name + " → FETCH FAILED ("+e.message+")");
+      return 0;
     }
+  }
+
+  await testHead(TF,"TFJS");
+  await testHead(ESM,"ESM");
+  await testHead(UMD,"UMD");
+
+  log("\n=== TEST 2: TRY LOAD TF SCRIPT ===");
+  try{
+    await new Promise((res,rej)=>{
+      const s=document.createElement("script");
+      s.src=TF; s.onload=res; s.onerror=rej;
+      document.head.appendChild(s);
+    });
+    log("TFJS Script Loaded OK");
   }catch(e){
-    log('Failed to load tf from CDN:', e);
-    // still continue - maybe tf is available locally on host
+    log("TFJS Script FAILED: "+e.message);
   }
+  document.getElementById("tfStatus").textContent = !!window.tf;
 
-  // 2) try ESM import (modern)
+  log("\n=== TEST 3: TRY LOAD UMD (SCRIPT TAG) ===");
   try{
-    loaderStatus.textContent = 'trying ESM import';
-    log('Attempting ESM import of face-landmarks-detection...');
-    const mod = await import(FLD_ESM);
-    window.faceLandmarksDetection = mod;
-    loaderStatus.textContent = 'esm ok';
-    log('ESM import succeeded');
-    return true;
+    await new Promise((res,rej)=>{
+      const s=document.createElement("script");
+      s.src=UMD; s.onload=res; s.onerror=rej;
+      document.head.appendChild(s);
+    });
+    log("UMD Script Loaded OK");
   }catch(e){
-    log('ESM import failed:', e);
+    log("UMD Script FAILED: "+e.message);
   }
+  document.getElementById("fldStatus").textContent = !!window.faceLandmarksDetection;
 
-  // 3) try UMD script tag
+  log("\n=== TEST 4: TRY IMPORT(ESM) ===");
   try{
-    loaderStatus.textContent = 'trying UMD tag';
-    log('Attempting to load UMD script...');
-    await loadScriptTag(FLD_UMD);
-    if(window.faceLandmarksDetection){
-      loaderStatus.textContent = 'umd ok';
-      log('UMD script loaded and exposed faceLandmarksDetection');
-      return true;
-    } else {
-      log('UMD script loaded but faceLandmarksDetection not on window');
-    }
+    const mod = await import(ESM);
+    log("ESM IMPORT OK (keys: "+Object.keys(mod).slice(0,6)+")");
   }catch(e){
-    log('UMD script tag failed:', e);
+    log("ESM IMPORT FAILED: "+e.message);
   }
 
-  // 4) try fetch+eval (last resort)
+  log("\n=== TEST 5: TRY FETCH+EVAL (fallback) ===");
   try{
-    loaderStatus.textContent = 'trying fetch+eval';
-    log('Attempting fetch+eval of UMD source...');
-    const r = await fetch(FLD_UMD, { mode: 'cors' });
-    if(!r.ok) throw new Error('fetch failed: ' + r.status);
-    const text = await r.text();
-    // evaluate in global scope
-    const script = document.createElement('script');
-    script.text = text + '\n//# sourceURL=face-landmarks-detection.eval.js';
-    document.head.appendChild(script);
-    if(window.faceLandmarksDetection){
-      loaderStatus.textContent = 'eval ok';
-      log('fetch+eval succeeded');
-      return true;
-    } else {
-      log('fetch+eval finished but module still not exposed');
-    }
+    const txt = await (await fetch(UMD)).text();
+    eval(txt);
+    log("FETCH+EVAL OK");
   }catch(e){
-    log('fetch+eval failed:', e);
+    log("FETCH+EVAL FAILED: "+e.message);
   }
 
-  // 5) final failure
-  loaderStatus.textContent = 'failed';
-  messages.textContent = 'faceLandmarksDetection tidak tersedia. Jika Anda memakai CSP yang ketat atau CDN diblokir, satu-satunya solusi adalah menempatkan bundle library (tf.min.js dan face-landmarks-detection.min.js) secara lokal di repo/public dan memanggilnya dari sana. Saya sudah mencoba semua fallback yang mungkin dari dua file HTML saja.';
-  return false;
-}
-
-/* load model after ensureLibraries */
-async function loadModelIfReady(){
-  modelStatus.textContent = 'loading';
-  if(!window.faceLandmarksDetection){
-    modelStatus.textContent = 'missing';
-    log('faceLandmarksDetection not present after ensureLibraries');
-    return false;
-  }
-  try{
-    // prefer webgl
-    if(window.tf && window.tf.setBackend){
-      try{ await window.tf.setBackend('webgl'); log('tf backend webgl set'); } catch(e){ log('setBackend failed', e); }
-    }
-    const fld = window.faceLandmarksDetection;
-    model = await fld.load(fld.SupportedPackages.mediapipeFacemesh, { maxFaces: 1 });
-    modelStatus.textContent = 'ready';
-    messages.textContent = 'Model siap. Tekan Mulai Scan.';
-    overlayCtx = document.getElementById('overlay').getContext('2d');
-    return true;
-  }catch(err){
-    modelStatus.textContent = 'failed';
-    messages.textContent = 'Gagal memuat model: ' + (err && err.message ? err.message : String(err));
-    log('model load error', err);
-    return false;
-  }
-}
-
-/* small helpers for detection UI */
-function addMediaItem(name, blob){
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = name; a.textContent = name;
-  mediaList.prepend(a);
-}
-
-/* camera and detection workflow (simplified, uses model when ready) */
-async function startCamera(){
-  const vid = document.getElementById('video');
-  const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 }, audio: false });
-  vid.srcObject = s;
-  streamRef = s;
-  await vid.play();
-  const overlay = document.getElementById('overlay');
-  overlay.width = vid.videoWidth || 640;
-  overlay.height = vid.videoHeight || 480;
-  log('camera started');
-  return s;
-}
-
-function computeEAR(upper, lower){
-  const v = (Math.hypot(upper[1][0]-lower[5][0], upper[1][1]-lower[5][1]) +
-             Math.hypot(upper[2][0]-lower[4][0], upper[2][1]-lower[4][1]))/2;
-  const h = Math.hypot(upper[0][0]-upper[3][0], upper[0][1]-upper[3][1]) || 1;
-  return v/h;
-}
-function averagePoint(idxs, landmarks){
-  let x=0,y=0,c=0;
-  for(const i of idxs){ if(!landmarks[i]) continue; x+=landmarks[i][0]; y+=landmarks[i][1]; c++; }
-  return [x/c, y/c];
-}
-function estimateYaw(landmarks){
-  const left = averagePoint([33,133,159,158], landmarks);
-  const right = averagePoint([362,263,386,387], landmarks);
-  const nose = landmarks[1] || [(left[0]+right[0])/2,(left[1]+right[1])/2];
-  const dxL = nose[0] - left[0];
-  const dxR = right[0] - nose[0];
-  return (dxL - dxR) * 0.5;
-}
-function estimatePitch(landmarks){
-  const nose = landmarks[1] || [0,0];
-  const eyeCenter = averagePoint([33,133,362,263], landmarks);
-  return (eyeCenter[1] - nose[1]);
-}
-
-/* basic detection loop for debug & liveness steps (kept small) */
-let detectActive = false;
-const STEPS = [
-  { id:'center', label:'Hadapkan muka ke tengah', validator: c=> Math.abs(c.avgYaw) < 8 && Math.abs(c.avgPitch) < 10, need: 3 },
-  { id:'left', label:'Miring ke KIRI', validator: c=> c.avgYaw < -12, need: 3 },
-  { id:'right', label:'Miring ke KANAN', validator: c=> c.avgYaw > 12, need: 3 },
-  { id:'blink', label:'Kedipkan mata', validator: c=> c.blinkNow === true, need: 1 },
-  { id:'nod', label:'Angguk kepala', validator: c=> Math.abs(c.avgPitch) > 12, need: 3 }
-];
-let currentStep = 0;
-let yawBuf = [], pitchBuf = [], earBuf = [], lastBlinkTs = 0, consecutive = {};
-
-async function detectionLoop(){
-  detectActive = true;
-  const start = Date.now();
-  const vid = document.getElementById('video');
-  const overlay = document.getElementById('overlay');
-  const ctx = overlay.getContext('2d');
-  while(detectActive){
-    if(!model){
-      await new Promise(r=>setTimeout(r,200));
-      continue;
-    }
-    const preds = await model.estimateFaces({ input: vid, returnTensors: false, flipHorizontal: true });
-    ctx.clearRect(0,0,overlay.width,overlay.height);
-    if(preds && preds.length>0){
-      faceDetectedEl.textContent = 'yes'; faceDetectedEl.className = 'ok';
-      const lm = preds[0].scaledMesh;
-      // draw points sparingly
-      ctx.fillStyle = 'rgba(6,182,212,0.9)';
-      for(let i=0;i<lm.length;i+=12){ ctx.beginPath(); ctx.arc(lm[i][0], lm[i][1], 1.1,0,Math.PI*2); ctx.fill(); }
-
-      // compute metrics
-      const yaw = estimateYaw(lm);
-      const pitch = estimatePitch(lm);
-      yawBuf.push(yaw); if(yawBuf.length>6) yawBuf.shift();
-      pitchBuf.push(pitch); if(pitchBuf.length>6) pitchBuf.shift();
-
-      const leftUpper = [lm[159], lm[160], lm[158], lm[33]];
-      const leftLower = [lm[145], lm[144], lm[153], lm[133]];
-      const rightUpper = [lm[386], lm[387], lm[385], lm[362]];
-      const rightLower = [lm[374], lm[373], lm[380], lm[263]];
-      const ear = computeEAR(leftUpper, leftLower) + computeEAR(rightUpper, rightLower);
-      const earAvg = ear/2;
-      earBuf.push(earAvg); if(earBuf.length>10) earBuf.shift();
-
-      // blink detection (dip->rise)
-      let blinkNow = false;
-      if(earBuf.length>=3){
-        const a = earBuf[earBuf.length-3], b = earBuf[earBuf.length-2], c = earBuf[earBuf.length-1];
-        if(b < 0.18 && c >= 0.18 && (Date.now()-lastBlinkTs) > 350){ blinkNow=true; lastBlinkTs = Date.now(); }
-      }
-
-      // motion (frame diff)
-      const tmp = document.createElement('canvas'); tmp.width = overlay.width; tmp.height = overlay.height;
-      const tctx = tmp.getContext('2d'); tctx.drawImage(vid,0,0,tmp.width,tmp.height);
-      const id = tctx.getImageData(0,0,tmp.width,tmp.height);
-      let motion = 0;
-      if(!lastFrameData){ lastFrameData = id; motion = 0; } else {
-        let diff=0; for(let i=0;i<id.data.length;i+=4){ diff += Math.abs(id.data[i]-lastFrameData.data[i]); diff+=Math.abs(id.data[i+1]-lastFrameData.data[i+1]); diff+=Math.abs(id.data[i+2]-lastFrameData.data[i+2]); }
-        motion = diff / (id.data.length/4);
-        lastFrameData = id;
-      }
-
-      // context and UI
-      const avgYaw = yawBuf.reduce((a,b)=>a+b,0)/yawBuf.length;
-      const avgPitch = pitchBuf.reduce((a,b)=>a+b,0)/pitchBuf.length;
-      $('valYaw')?.textContent = avgYaw.toFixed(2);
-      $('valPitch')?.textContent = avgPitch.toFixed(2);
-      $('valEAR')?.textContent = earAvg.toFixed(3);
-      $('valBlink')?.textContent = blinkNow ? 'yes' : 'no';
-      $('valMotion')?.textContent = motion.toFixed(1);
-
-      // step validation
-      const step = STEPS[currentStep];
-      const ctxObj = { avgYaw, avgPitch, ear: earAvg, earBuf, blinkNow, motion };
-      const ok = step.validator(ctxObj);
-      if(step.id !== 'blink'){
-        if(ok) consecutive[step.id] = Math.min(step.need, (consecutive[step.id]||0) + 1);
-        else consecutive[step.id] = 0;
-        mainInstruction.textContent = `${step.label} (${consecutive[step.id]||0}/${step.need})`;
-      } else {
-        if(ok) consecutive[step.id] = 1;
-        mainInstruction.textContent = `${step.label} (${consecutive[step.id]||0}/${step.need})`;
-      }
-
-      if(consecutive[step.id] >= step.need){
-        mainInstruction.textContent = `${step.label} — OK`;
-        currentStep++;
-        $('progress').textContent = `${currentStep}/${STEPS.length}`;
-        if(currentStep < STEPS.length){
-          mainInstruction.textContent = `Berhasil: lanjut → ${STEPS[currentStep].label}`;
-          yawBuf=[]; pitchBuf=[]; earBuf=[]; Object.keys(consecutive).forEach(k=>consecutive[k]=0);
-          await new Promise(r=>setTimeout(r,500));
-        } else {
-          // final motion check
-          if(motion > 8){
-            detectActive = false; finish(true); return;
-          } else {
-            mainInstruction.textContent = 'Gerakkan kepala sedikit untuk verifikasi akhir';
-            await new Promise(r=>setTimeout(r,800));
-            if(lastFrameData && motion > 8){ detectActive=false; finish(true); return; } else { detectActive=false; finish(false); return; }
-          }
-        }
-      }
-
-    } else {
-      faceDetectedEl.textContent = 'no'; faceDetectedEl.className = 'err';
-      mainInstruction.textContent = STEPS[currentStep].label;
-    }
-
-    // timeout
-    if((Date.now() - start) / 1000 > 120){ detectActive=false; finish(false); return; }
-
-    await new Promise(r=>setTimeout(r,120));
-  }
-}
-
-/* start/stop UI */
-document.getElementById('startBtn').addEventListener('click', async ()=>{
-  document.getElementById('startBtn').style.display = 'none';
-  document.getElementById('stopBtn').style.display = 'inline-block';
-  try{
-    await ensureLibraries();
-    await loadModelIfReady();
-    if(!model){ log('Model not ready after loadModelIfReady'); return; }
-    await startCamera();
-    detectionLoop();
-  }catch(e){
-    log('Start error', e);
-    messages.textContent = 'Start failed: ' + (e.message || e);
-  }
-});
-
-document.getElementById('stopBtn').addEventListener('click', ()=>{
-  detectActive = false;
-  if(streamRef){ streamRef.getTracks().forEach(t=>t.stop()); streamRef=null; }
-  document.getElementById('startBtn').style.display = 'inline-block';
-  document.getElementById('stopBtn').style.display = 'none';
-  messages.textContent = 'Stopped by user.';
-});
-
-/* folder picker just for completeness (may be unsupported on some mobile browsers) */
-document.getElementById('chooseFolderBtn').addEventListener('click', async ()=>{
-  if('showDirectoryPicker' in window){
-    try{ folderHandle = await window.showDirectoryPicker(); messages.textContent = 'Folder selected.'; }catch(e){ messages.textContent = 'Folder pick canceled.'; }
-  } else messages.textContent = 'showDirectoryPicker not supported in this browser.';
-});
-
-/* finish: show result or retry */
-async function finish(success){
-  messages.textContent = success ? 'VERIFIED — redirecting...' : 'VERIFICATION FAILED — try again.';
-  // stop camera/recorder
-  if(streamRef){ streamRef.getTracks().forEach(t=>t.stop()); streamRef=null; }
-  document.getElementById('stopBtn').style.display = 'none';
-  if(success){
-    setTimeout(()=> window.location.href = `result.html?result=success&ts=${Date.now()}`, 700);
-  } else {
-    document.getElementById('startBtn').style.display = 'inline-block';
-  }
-}
-
-/* start loader automatically attempt on page load (so model may be warm) */
-(async ()=>{
-  log('Booting: will attempt to ensure libraries automatically (in background).');
-  try{
-    await ensureLibraries();
-    await loadModelIfReady();
-  }catch(err){
-    log('Autoload error', err);
-  }
+  document.getElementById("loaderStatus").textContent = "DONE";
 })();
 </script>
+
 </body>
 </html>
