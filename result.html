@@ -29,7 +29,7 @@
   const summary = document.getElementById('summary');
 
   if(result === 'success'){
-    summary.innerHTML = `<strong>Verifikasi BERHASIL.</strong><br>Timestamp: ${ts}<br>File: disimpan ke folder yang Anda pilih saat scan (atau ZIP pada fallback).`;
+    summary.innerHTML = `<strong>Verifikasi BERHASIL.</strong><br>Timestamp: ${ts}<br>File: disimpan ke folder yang Anda pilih saat scan (atau preview jika tidak memilih folder).`;
   } else if(result === 'failed'){
     summary.innerHTML = `<strong>Verifikasi GAGAL.</strong><br>Silakan kembali dan coba ulang.`;
   } else {
