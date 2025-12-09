@@ -3,104 +3,246 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>SCAN DIAGNOSTIC</title>
+<title>SCAN - FINAL 1.0.6</title>
 <style>
   body{font-family:Arial;background:#071428;color:#e6eef6;margin:0;padding:20px}
-  .card{background:#0d1528;padding:14px;border-radius:10px;max-width:900px;margin:auto}
-  .log{white-space:pre-wrap;font-size:12px;background:#0003;padding:10px;border-radius:8px;height:300px;overflow:auto}
+  .wrap{max-width:960px;margin:auto}
+  .card{background:#0d1528;padding:14px;border-radius:10px;margin-bottom:20px}
+  .log{white-space:pre-wrap;font-size:12px;background:#0003;padding:10px;border-radius:8px;height:260px;overflow:auto}
+  .video-wrap{background:#000;border-radius:10px;overflow:hidden;position:relative}
+  video{width:100%;display:block}
+  canvas{position:absolute;left:0;top:0;pointer-events:none}
   button{background:#06b6d4;color:#012;border:0;padding:10px 14px;border-radius:8px;margin-top:12px}
 </style>
 </head>
 <body>
-<div class="card">
-  <h2>SCAN DIAGNOSTIC</h2>
-  <p>Semua tes loader CDN akan muncul di bawah.</p>
 
-  <div><strong>Loader Status:</strong> <span id="loaderStatus">Running tests…</span></div>
-  <div><strong>TF.js Detected:</strong> <span id="tfStatus">-</span></div>
-  <div><strong>FaceLandmarks Detected:</strong> <span id="fldStatus">-</span></div>
+<div class="wrap">
+  <div class="card">
+    <h2>SCAN DIAGNOSTIC (FINAL 1.0.6)</h2>
 
-  <h3>Loader Diagnostic Log (copy/screenshot kirim ke saya)</h3>
-  <div class="log" id="log"></div>
+    <div><strong>Loader Status:</strong> <span id="loaderStatus">Running…</span></div>
+    <div><strong>TF.js Detected:</strong> <span id="tfStatus">-</span></div>
+    <div><strong>FaceLandmarks Detected:</strong> <span id="fldStatus">-</span></div>
 
-  <button onclick="location.reload()">Reload Test</button>
+    <h3>Loader Diagnostic Log</h3>
+    <div class="log" id="log"></div>
+
+    <button onclick="location.reload()">Reload Test</button>
+  </div>
+
+  <div class="card">
+      <h2>Live Scan</h2>
+
+      <div class="video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="overlay"></canvas>
+      </div>
+
+      <div style="margin-top:10px" id="mainInstruction">Instruksi: Tekan Mulai Scan.</div>
+
+      <button id="startBtn">Mulai Scan</button>
+      <button id="stopBtn" style="display:none">Stop</button>
+
+      <div style="margin-top:10px"><strong>Status:</strong> <span id="scanStatus">Idle</span></div>
+      <div><strong>Face:</strong> <span id="faceDetected">no</span></div>
+      <div><strong>Yaw:</strong> <span id="valYaw">-</span></div>
+      <div><strong>Pitch:</strong> <span id="valPitch">-</span></div>
+      <div><strong>EAR:</strong> <span id="valEAR">-</span></div>
+      <div><strong>Blink:</strong> <span id="valBlink">-</span></div>
+  </div>
 </div>
 
 <script>
-const logEl = document.getElementById("log");
-function log(msg){
-  console.log(msg);
-  logEl.textContent += msg + "\n";
+/* ========= DIAGNOSTIC LOADER ========= */
+
+const TF_CDN = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js";
+const FLD_ESM = "https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.6/dist/face-landmarks-detection.esm.js";
+const FLD_UMD = "https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.6/dist/face-landmarks-detection.min.js";
+
+const $ = id => document.getElementById(id);
+const logEl = $("log");
+function log(m){ logEl.textContent += m + "\n"; console.log(m); }
+
+/* HEAD tester */
+async function headTest(url,name){
+  try{
+    const r = await fetch(url,{method:"HEAD"});
+    log(name+" HEAD → "+r.status);
+    return r.status;
+  }catch(e){
+    log(name+" HEAD FAILED: "+e.message);
+    return 0;
+  }
 }
 
-const TF = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js";
-const ESM = "https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.esm.js";
-const UMD = "https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.min.js";
+/* script loader */
+function loadScript(url){
+  return new Promise((res,rej)=>{
+    const s=document.createElement("script");
+    s.src=url; s.onload=res; s.onerror=rej;
+    document.head.appendChild(s);
+  });
+}
 
-document.getElementById("loaderStatus").textContent = "Running…";
+async function ensureLibraries(){
+  $("loaderStatus").textContent = "Testing…";
 
-(async () => {
-  log("=== TEST 1: FETCH HEAD ===");
-  async function testHead(url,name){
-    try{
-      const r = await fetch(url,{method:"HEAD"});
-      log(name + " → status " + r.status);
-      return r.status;
-    }catch(e){
-      log(name + " → FETCH FAILED ("+e.message+")");
-      return 0;
+  log("=== TEST 1: HEAD ===");
+  await headTest(TF_CDN,"TF");
+  await headTest(ESM,"ESM");
+  await headTest(UMD,"UMD");
+
+  log("\n=== TEST 2: LOAD TF ===");
+  try{
+    await loadScript(TF_CDN);
+    log("TF loaded OK");
+  }catch(e){
+    log("TF failed: "+e.message);
+  }
+  $("tfStatus").textContent = !!window.tf;
+
+  log("\n=== TEST 3: LOAD UMD ===");
+  try{
+    await loadScript(FLD_UMD);
+    log("UMD loaded OK");
+  }catch(e){
+    log("UMD failed: "+e.message);
+  }
+  $("fldStatus").textContent = !!window.faceLandmarksDetection;
+
+  log("\n=== TEST 4: ESM IMPORT ===");
+  try{
+    const mod = await import(FLD_ESM);
+    window.faceLandmarksDetection = mod; // override UMD
+    log("ESM import OK");
+  }catch(e){
+    log("ESM import FAILED: "+e.message);
+  }
+
+  $("loaderStatus").textContent = "DONE";
+}
+
+ensureLibraries();
+
+/* ========= SCAN ENGINE ========= */
+
+let model=null;
+
+async function loadModel(){
+  $("scanStatus").textContent="Loading model…";
+  if(!window.faceLandmarksDetection){
+    $("scanStatus").textContent="Model missing!";
+    log("[SCAN] faceLandmarksDetection NOT FOUND");
+    return;
+  }
+  try{
+    const fld = window.faceLandmarksDetection;
+    model = await fld.load(fld.SupportedPackages.mediapipeFacemesh,{maxFaces:1});
+    $("modelStatus").textContent="ready";
+    $("scanStatus").textContent="Model Ready";
+    log("[SCAN] Model loaded.");
+  }catch(e){
+    $("scanStatus").textContent="Model load failed";
+    log("[SCAN] Model load error: "+e.message);
+  }
+}
+
+async function startCamera(){
+  const v=$("video");
+  const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});
+  v.srcObject=s;
+  await v.play();
+  const c=$("overlay");
+  c.width=v.videoWidth||640;
+  c.height=v.videoHeight||480;
+  return s;
+}
+
+function computeEAR(u,l){
+  const v=(Math.hypot(u[1][0]-l[5][0],u[1][1]-l[5][1]) + Math.hypot(u[2][0]-l[4][0],u[2][1]-l[4][1]))/2;
+  const h=Math.hypot(u[0][0]-u[3][0],u[0][1]-u[3][1]);
+  return v/h;
+}
+
+function avg(pts,lm){
+  let x=0,y=0,c=0;
+  pts.forEach(i=>{ if(lm[i]){x+=lm[i][0];y+=lm[i][1];c++;} });
+  return [x/c,y/c];
+}
+function yaw(lm){
+  const L=avg([33,133],lm);
+  const R=avg([362,263],lm);
+  const N=lm[1];
+  return ( (N[0]-L[0]) - (R[0]-N[0]) )*0.5;
+}
+function pitch(lm){
+  const N=lm[1];
+  const E=avg([33,133,362,263],lm);
+  return (E[1]-N[1]);
+}
+
+let running=false;
+async function detectLoop(){
+  running=true;
+  const v=$("video");
+  const ctx=$("overlay").getContext("2d");
+
+  while(running){
+    if(!model){ await new Promise(r=>setTimeout(r,200)); continue; }
+
+    const preds = await model.estimateFaces({input:v,returnTensors:false,flipHorizontal:true});
+    ctx.clearRect(0,0,9999,9999);
+
+    if(preds.length>0){
+      $("faceDetected").textContent="yes";
+      const lm = preds[0].scaledMesh;
+
+      const Y=yaw(lm);
+      const P=pitch(lm);
+
+      const uL=[lm[159],lm[160],lm[158],lm[33]];
+      const lL=[lm[145],lm[144],lm[153],lm[133]];
+      const uR=[lm[386],lm[387],lm[385],lm[362]];
+      const lR=[lm[374],lm[373],lm[380],lm[263]];
+      const EAR=(computeEAR(uL,lL)+computeEAR(uR,lR))/2;
+
+      $("valYaw").textContent=Y.toFixed(2);
+      $("valPitch").textContent=P.toFixed(2);
+      $("valEAR").textContent=EAR.toFixed(3);
+
+      if(EAR<0.18){ $("valBlink").textContent="yes"; } 
+      else $("valBlink").textContent="no";
+
+    } else {
+      $("faceDetected").textContent="no";
+      $("valYaw").textContent="-";
+      $("valPitch").textContent="-";
+      $("valEAR").textContent="-";
+      $("valBlink").textContent="-";
     }
+
+    await new Promise(r=>setTimeout(r,150));
   }
+}
 
-  await testHead(TF,"TFJS");
-  await testHead(ESM,"ESM");
-  await testHead(UMD,"UMD");
+/* ===== UI ===== */
 
-  log("\n=== TEST 2: TRY LOAD TF SCRIPT ===");
-  try{
-    await new Promise((res,rej)=>{
-      const s=document.createElement("script");
-      s.src=TF; s.onload=res; s.onerror=rej;
-      document.head.appendChild(s);
-    });
-    log("TFJS Script Loaded OK");
-  }catch(e){
-    log("TFJS Script FAILED: "+e.message);
-  }
-  document.getElementById("tfStatus").textContent = !!window.tf;
+$("startBtn").onclick = async ()=>{
+  $("startBtn").style.display="none";
+  $("stopBtn").style.display="inline-block";
 
-  log("\n=== TEST 3: TRY LOAD UMD (SCRIPT TAG) ===");
-  try{
-    await new Promise((res,rej)=>{
-      const s=document.createElement("script");
-      s.src=UMD; s.onload=res; s.onerror=rej;
-      document.head.appendChild(s);
-    });
-    log("UMD Script Loaded OK");
-  }catch(e){
-    log("UMD Script FAILED: "+e.message);
-  }
-  document.getElementById("fldStatus").textContent = !!window.faceLandmarksDetection;
+  await loadModel();
+  await startCamera();
+  detectLoop();
+};
 
-  log("\n=== TEST 4: TRY IMPORT(ESM) ===");
-  try{
-    const mod = await import(ESM);
-    log("ESM IMPORT OK (keys: "+Object.keys(mod).slice(0,6)+")");
-  }catch(e){
-    log("ESM IMPORT FAILED: "+e.message);
-  }
-
-  log("\n=== TEST 5: TRY FETCH+EVAL (fallback) ===");
-  try{
-    const txt = await (await fetch(UMD)).text();
-    eval(txt);
-    log("FETCH+EVAL OK");
-  }catch(e){
-    log("FETCH+EVAL FAILED: "+e.message);
-  }
-
-  document.getElementById("loaderStatus").textContent = "DONE";
-})();
+$("stopBtn").onclick = ()=>{
+  running=false;
+  $("stopBtn").style.display="none";
+  $("startBtn").style.display="inline-block";
+  $("scanStatus").textContent="Stopped";
+};
 </script>
 
 </body>
