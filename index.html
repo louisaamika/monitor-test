@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
-<title>Scan Muka — Debug Liveness (Complete)</title>
+<title>Scan Muka — Debug Liveness (Final)</title>
 <style>
   :root{--bg:#071426;--card:#0b1220;--accent:#06b6d4;--text:#e6eef6}
   html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;color:var(--text);background:linear-gradient(180deg,#041024,#071428);display:flex;align-items:flex-start;justify-content:center;padding:18px}
@@ -30,16 +30,37 @@
 <!-- Load TFJS UMD first -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js"></script>
 
-<!-- Load face-landmarks-detection ESM and expose to window -->
-<script type="module">
+<!-- Ensure face-landmarks-detection available: try ESM then fallback UMD -->
+<script>
+async function ensureFaceLandmarksDetection() {
+  if (window.faceLandmarksDetection) return;
+  // Try ESM import
   try {
     const mod = await import('https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.esm.js');
     window.faceLandmarksDetection = mod;
-    console.log('faceLandmarksDetection (ESM) loaded');
-  } catch (err) {
-    console.error('Failed to load face-landmarks-detection ESM:', err);
-    // keep window.faceLandmarksDetection undefined; main script will handle this.
+    console.log('Loaded face-landmarks-detection (ESM)');
+    return;
+  } catch (esmErr) {
+    console.warn('ESM import failed:', esmErr);
   }
+
+  // Fallback UMD
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.3/dist/face-landmarks-detection.min.js';
+    s.async = true;
+    s.onload = () => {
+      if (window.faceLandmarksDetection) {
+        console.log('Loaded face-landmarks-detection (UMD)');
+        resolve();
+      } else {
+        reject(new Error('UMD loaded but faceLandmarksDetection not exposed'));
+      }
+    };
+    s.onerror = (e) => reject(new Error('Failed to load UMD script: ' + (e?.message || 'error')));
+    document.head.appendChild(s);
+  });
+}
 </script>
 </head>
 <body>
@@ -124,37 +145,31 @@ let captureInterval = null;
 let lastFrameData = null;
 let folderHandle = null;
 
-/* --- load model safely (wait for ESM exposure) --- */
-async function loadModelWithRetry(){
+/* --- load model (called after ensureFaceLandmarksDetection) --- */
+async function loadModel() {
   modelStatus.textContent = 'loading...';
-  // wait a bit for window.faceLandmarksDetection (ESM loader above)
-  for(let i=0;i<15 && !window.faceLandmarksDetection;i++){
-    await new Promise(r=>setTimeout(r,200));
-  }
-  if(!window.faceLandmarksDetection){
+  if (!window.faceLandmarksDetection) {
     modelStatus.textContent = 'failed';
     modelStatus.className = 'err';
-    messages.textContent = 'faceLandmarksDetection tidak tersedia. Periksa koneksi CDN atau urutan skrip.';
+    messages.textContent = 'faceLandmarksDetection tidak tersedia.';
     return;
   }
-  try{
-    // prefer webgl backend if possible
-    if(window.tf && window.tf.setBackend){
-      try{ await window.tf.setBackend('webgl'); }catch(e){ /* ignore */ }
+  try {
+    if (window.tf && window.tf.setBackend) {
+      try { await window.tf.setBackend('webgl'); } catch (e) { /* ignore */ }
     }
     const fld = window.faceLandmarksDetection;
-    model = await fld.load(fld.SupportedPackages.mediapipeFacemesh, {maxFaces:1});
+    model = await fld.load(fld.SupportedPackages.mediapipeFacemesh, { maxFaces: 1 });
     modelStatus.textContent = 'ready';
     modelStatus.className = 'ok';
     messages.textContent = 'Model siap. Tekan Mulai Scan.';
-  } catch(err){
+  } catch (err) {
     console.error('model load error', err);
     modelStatus.textContent = 'failed';
     modelStatus.className = 'err';
     messages.textContent = 'Gagal memuat model: ' + (err.message || String(err));
   }
 }
-loadModelWithRetry();
 
 /* --- helpers --- */
 function addMediaItem(name, blob){
@@ -236,7 +251,7 @@ const STEPS = [
 let current = 0;
 let yawBuf = [], pitchBuf = [], earBuf = [], lastBlinkTs = 0, consecutive = {};
 
-/* --- start button handler --- */
+/* --- start handler --- */
 startBtn.addEventListener('click', async ()=>{
   startBtn.style.display = 'none';
   stopBtn.style.display = 'inline-block';
@@ -289,7 +304,7 @@ async function detectLoop(){
     if(preds && preds.length>0){
       faceDetectedEl.textContent = 'yes'; faceDetectedEl.className = 'ok';
       const p = preds[0], lm = p.scaledMesh;
-      // small landmarks draw
+      // draw small landmarks
       ctx.fillStyle = 'rgba(6,182,212,0.9)';
       for(let i=0;i<lm.length;i+=10){ ctx.beginPath(); ctx.arc(lm[i][0], lm[i][1], 1.2,0,Math.PI*2); ctx.fill(); }
 
@@ -364,7 +379,6 @@ async function detectLoop(){
             return;
           } else {
             mainInstruction.textContent = 'Gerakkan kepala sedikit untuk verifikasi akhir';
-            // wait briefly for motion
             await new Promise(r=>setTimeout(r,800));
             if(lastFrameData && computeFrameDiff(lastFrameData) > 8){
               detectLoopActive = false; await finish(true); return;
@@ -410,9 +424,8 @@ async function finish(success){
   const videoBlob = new Blob(recordedBlobs, {type: recordedBlobs[0]?.type || 'video/webm'});
   addMediaItem(`scan_result_${Date.now()}.webm`, videoBlob);
 
-  // create minimal manifest
   const manifest = { result: success ? 'success' : 'failed', ts: Date.now(), frames_count: frameBlobs.length, video_size: videoBlob.size };
-  // try save to folder (frames subfolder) if available
+
   if(folderHandle && 'getDirectoryHandle' in folderHandle){
     try{
       const framesDir = await folderHandle.getDirectoryHandle('frames', {create:true});
@@ -440,6 +453,16 @@ async function finish(success){
     messages.textContent = 'Verifikasi gagal — coba ulang.';
   }
 }
+
+/* --- start process: ensure module then load model --- */
+ensureFaceLandmarksDetection().then(() => {
+  loadModel();
+}).catch(err => {
+  console.error('ensureFaceLandmarksDetection error', err);
+  modelStatus.textContent = 'failed';
+  modelStatus.className = 'err';
+  messages.textContent = 'Gagal memuat modul face-landmarks-detection: ' + (err.message || String(err));
+});
 
 /* cleanup on unload */
 window.addEventListener('beforeunload', ()=>{ if(streamRef) streamRef.getTracks().forEach(t=>t.stop()); });
