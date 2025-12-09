@@ -3,247 +3,533 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>SCAN - FINAL 1.0.6</title>
+<title>Scan Muka — Final</title>
 <style>
-  body{font-family:Arial;background:#071428;color:#e6eef6;margin:0;padding:20px}
-  .wrap{max-width:960px;margin:auto}
-  .card{background:#0d1528;padding:14px;border-radius:10px;margin-bottom:20px}
-  .log{white-space:pre-wrap;font-size:12px;background:#0003;padding:10px;border-radius:8px;height:260px;overflow:auto}
-  .video-wrap{background:#000;border-radius:10px;overflow:hidden;position:relative}
-  video{width:100%;display:block}
+  :root{--bg:#071428;--card:#0b1220;--accent:#06b6d4;--text:#e6eef6}
+  html,body{height:100%;margin:0;font-family:Inter,system-ui,Arial;color:var(--text);background:linear-gradient(180deg,#041024,#071428);display:flex;align-items:flex-start;justify-content:center;padding:18px}
+  .frame{width:980px;max-width:98%;background:rgba(255,255,255,0.02);padding:16px;border-radius:12px;box-shadow:0 8px 30px rgba(0,0,0,0.6)}
+  .layout{display:flex;gap:14px;flex-wrap:wrap}
+  .left{flex:1;min-width:320px}
+  .right{width:360px}
+  .video-wrap{position:relative;background:#000;border-radius:8px;overflow:hidden}
+  video{width:100%;height:auto;display:block}
   canvas{position:absolute;left:0;top:0;pointer-events:none}
-  button{background:#06b6d4;color:#012;border:0;padding:10px 14px;border-radius:8px;margin-top:12px}
+  .instr{background:#061423;padding:10px;border-radius:8px;margin-top:10px;font-size:14px}
+  .controls{margin-top:10px}
+  button{background:var(--accent);color:#022;padding:10px 14px;border-radius:8px;border:0;cursor:pointer;font-weight:700}
+  .small{font-size:13px;color:#9fb5c1;margin-top:6px}
+  .debug{background:#061322;padding:10px;border-radius:8px;margin-top:10px;font-size:13px;line-height:1.4}
+  .media-list{margin-top:8px;max-height:220px;overflow:auto}
+  .log{white-space:pre-wrap;max-height:200px;overflow:auto;font-size:12px;color:#cbe}
+  a{color:var(--accent)}
 </style>
 </head>
 <body>
+  <div class="frame">
+    <h1>Scan Muka — Final</h1>
+    <div class="layout">
+      <div class="left">
+        <div class="video-wrap">
+          <video id="video" autoplay playsinline muted></video>
+          <canvas id="overlay"></canvas>
+        </div>
 
-<div class="wrap">
-  <div class="card">
-    <h2>SCAN DIAGNOSTIC (FINAL 1.0.6)</h2>
+        <div class="instr" id="mainInstruction">Instruksi: Tekan <strong>Mulai Scan</strong></div>
 
-    <div><strong>Loader Status:</strong> <span id="loaderStatus">Running…</span></div>
-    <div><strong>TF.js Detected:</strong> <span id="tfStatus">-</span></div>
-    <div><strong>FaceLandmarks Detected:</strong> <span id="fldStatus">-</span></div>
+        <div class="controls">
+          <button id="startBtn">Mulai Scan</button>
+          <button id="stopBtn" style="display:none">Stop</button>
+          <button id="chooseFolderBtn">Pilih Folder Simpan (opsional)</button>
+        </div>
 
-    <h3>Loader Diagnostic Log</h3>
-    <div class="log" id="log"></div>
-
-    <button onclick="location.reload()">Reload Test</button>
-  </div>
-
-  <div class="card">
-      <h2>Live Scan</h2>
-
-      <div class="video-wrap">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="overlay"></canvas>
+        <div class="small" id="statusLine">Status: idle</div>
       </div>
 
-      <div style="margin-top:10px" id="mainInstruction">Instruksi: Tekan Mulai Scan.</div>
+      <aside class="right">
+        <div class="debug">
+          <div><strong>Loader:</strong> <span id="loaderStatus">idle</span></div>
+          <div><strong>Model:</strong> <span id="modelStatus">waiting</span></div>
+          <div><strong>Face:</strong> <span id="faceDetected">no</span></div>
+          <div style="margin-top:6px"><strong>Step:</strong> <span id="stepLabel">-</span> (<span id="progress">0/5</span>)</div>
+          <hr style="border:none;border-top:1px solid rgba(255,255,255,0.04);margin:8px 0">
+          <div><strong>yaw</strong>: <span id="valYaw">-</span></div>
+          <div><strong>pitch</strong>: <span id="valPitch">-</span></div>
+          <div><strong>EAR</strong>: <span id="valEAR">-</span></div>
+          <div><strong>blinkNow</strong>: <span id="valBlink">-</span></div>
+          <div><strong>motion</strong>: <span id="valMotion">-</span></div>
+          <hr style="border:none;border-top:1px solid rgba(255,255,255,0.04);margin:8px 0">
+          <div id="messages" class="small">Messages appear here.</div>
+          <div class="log" id="log"></div>
+        </div>
 
-      <button id="startBtn">Mulai Scan</button>
-      <button id="stopBtn" style="display:none">Stop</button>
-
-      <div style="margin-top:10px"><strong>Status:</strong> <span id="scanStatus">Idle</span></div>
-      <div><strong>Face:</strong> <span id="faceDetected">no</span></div>
-      <div><strong>Yaw:</strong> <span id="valYaw">-</span></div>
-      <div><strong>Pitch:</strong> <span id="valPitch">-</span></div>
-      <div><strong>EAR:</strong> <span id="valEAR">-</span></div>
-      <div><strong>Blink:</strong> <span id="valBlink">-</span></div>
+        <div class="instr" style="margin-top:10px">
+          <strong>Media (preview)</strong>
+          <div class="media-list" id="mediaList"></div>
+        </div>
+      </aside>
+    </div>
   </div>
-</div>
 
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.7.1/dist/jszip.min.js"></script>
 <script>
-/* ========= DIAGNOSTIC LOADER ========= */
-
-const TF_CDN = "https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js";
-const FLD_ESM = "https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.6/dist/face-landmarks-detection.esm.js";
-const FLD_UMD = "https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.6/dist/face-landmarks-detection.min.js";
+/* ---------- CONFIG: multiple CDN alternatives ---------- */
+const TF_URLS = [
+  'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js',
+  'https://unpkg.com/@tensorflow/tfjs@3.21.0/dist/tf.min.js'
+];
+const FLD_ESM_URLS = [
+  'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.6/dist/face-landmarks-detection.esm.js',
+  'https://unpkg.com/@tensorflow-models/face-landmarks-detection@1.0.6/dist/face-landmarks-detection.esm.js'
+];
+const FLD_UMD_URLS = [
+  'https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@1.0.6/dist/face-landmarks-detection.min.js',
+  'https://unpkg.com/@tensorflow-models/face-landmarks-detection@1.0.6/dist/face-landmarks-detection.min.js'
+];
 
 const $ = id => document.getElementById(id);
-const logEl = $("log");
-function log(m){ logEl.textContent += m + "\n"; console.log(m); }
+const logEl = $('log');
+function log(...a){ const s = a.map(x => (typeof x==='object' ? JSON.stringify(x) : String(x))).join(' '); logEl.textContent = (new Date()).toISOString() + ' — ' + s + '\n' + logEl.textContent; }
 
-/* HEAD tester */
-async function headTest(url,name){
-  try{
-    const r = await fetch(url,{method:"HEAD"});
-    log(name+" HEAD → "+r.status);
-    return r.status;
-  }catch(e){
-    log(name+" HEAD FAILED: "+e.message);
-    return 0;
-  }
-}
-
-/* script loader */
+/* ---------- loader utilities ---------- */
 function loadScript(url){
-  return new Promise((res,rej)=>{
-    const s=document.createElement("script");
-    s.src=url; s.onload=res; s.onerror=rej;
+  return new Promise((res, rej)=>{
+    const s = document.createElement('script');
+    s.src = url; s.async = true;
+    s.onload = ()=>res(url);
+    s.onerror = (e)=>rej(new Error('script load error '+url));
     document.head.appendChild(s);
   });
 }
-
-async function ensureLibraries(){
-  $("loaderStatus").textContent = "Testing…";
-
-  log("=== TEST 1: HEAD ===");
-  await headTest(TF_CDN,"TF");
-  await headTest(ESM,"ESM");
-  await headTest(UMD,"UMD");
-
-  log("\n=== TEST 2: LOAD TF ===");
-  try{
-    await loadScript(TF_CDN);
-    log("TF loaded OK");
-  }catch(e){
-    log("TF failed: "+e.message);
+async function tryLoadOne(urls){
+  for(const u of urls){
+    try{
+      await loadScript(u);
+      return u;
+    }catch(e){
+      log('load failed', u, e.message || e);
+    }
   }
-  $("tfStatus").textContent = !!window.tf;
-
-  log("\n=== TEST 3: LOAD UMD ===");
-  try{
-    await loadScript(FLD_UMD);
-    log("UMD loaded OK");
-  }catch(e){
-    log("UMD failed: "+e.message);
+  throw new Error('all failed');
+}
+async function tryImportOne(urls){
+  for(const u of urls){
+    try{
+      const mod = await import(u);
+      return {url:u,mod};
+    }catch(e){
+      log('import failed', u, e.message || e);
+    }
   }
-  $("fldStatus").textContent = !!window.faceLandmarksDetection;
-
-  log("\n=== TEST 4: ESM IMPORT ===");
-  try{
-    const mod = await import(FLD_ESM);
-    window.faceLandmarksDetection = mod; // override UMD
-    log("ESM import OK");
-  }catch(e){
-    log("ESM import FAILED: "+e.message);
-  }
-
-  $("loaderStatus").textContent = "DONE";
+  throw new Error('all imports failed');
 }
 
+/* ---------- main library loader ---------- */
+async function ensureLibraries(){
+  $('loaderStatus').textContent = 'loading tf...';
+  // ensure tf
+  if(!window.tf){
+    try{
+      const tfUrl = await tryLoadOne(TF_URLS);
+      log('tf loaded from', tfUrl);
+    }catch(e){
+      log('tf all CDN load failed:', e.message || e);
+    }
+  } else log('tf already present');
+
+  // try ESM import for face-landmarks
+  $('loaderStatus').textContent = 'loading face-landmarks (esm)...';
+  try{
+    const r = await tryImportOne(FLD_ESM_URLS);
+    window.faceLandmarksDetection = r.mod;
+    log('face-landmarks loaded (esm) from', r.url);
+    $('loaderStatus').textContent = 'esm ok';
+    return;
+  }catch(e){
+    log('esm import failed:', e.message || e);
+  }
+
+  // fallback UMD script tag
+  $('loaderStatus').textContent = 'loading face-landmarks (umd)...';
+  try{
+    const u = await tryLoadOne(FLD_UMD_URLS);
+    if(window.faceLandmarksDetection) {
+      log('face-landmarks UMD exposed on window from', u);
+      $('loaderStatus').textContent = 'umd ok';
+      return;
+    } else {
+      log('UMD loaded but window.faceLandmarksDetection missing');
+    }
+  }catch(e){
+    log('UMD script load failed:', e.message || e);
+  }
+
+  // fetch+eval fallback
+  $('loaderStatus').textContent = 'fetch+eval fallback';
+  for(const u of FLD_UMD_URLS){
+    try{
+      const r = await fetch(u);
+      if(!r.ok){ log('fetch failed', u, r.status); continue; }
+      const txt = await r.text();
+      // if it's HTML 404, skip
+      if(txt.trim().startsWith('<!doctype') || txt.includes('<html')){ log('fetched content looks like HTML (not JS):', u); continue; }
+      // eval in page
+      const script = document.createElement('script');
+      script.text = txt + '\n//# sourceURL=' + u;
+      document.head.appendChild(script);
+      if(window.faceLandmarksDetection){
+        log('fetch+eval exposed faceLandmarksDetection from', u);
+        $('loaderStatus').textContent = 'eval ok';
+        return;
+      } else {
+        log('fetch+eval did not expose global for', u);
+      }
+    }catch(e){
+      log('fetch+eval failed', u, e.message || e);
+    }
+  }
+
+  $('loaderStatus').textContent = 'failed';
+  $('messages').textContent = 'Gagal memuat face-landmarks-detection dari CDN. Jika hosting Anda memblokir CDN, satu-satunya solusi pasti adalah menaruh bundle library dalam repo (saya bisa bantu).';
+}
+
+/* start trying as soon as page loads (warm) */
 ensureLibraries();
 
-/* ========= SCAN ENGINE ========= */
+/* ---------- Liveness + capture logic ---------- */
+let model = null;
+let streamRef = null;
+let recorder = null;
+let recordedBlobs = [];
+let frameBlobs = [];
+let captureInterval = null;
+let detectLoopActive = false;
+let folderHandle = null;
+let lastFrameData = null;
 
-let model=null;
-
-async function loadModel(){
-  $("scanStatus").textContent="Loading model…";
-  if(!window.faceLandmarksDetection){
-    $("scanStatus").textContent="Model missing!";
-    log("[SCAN] faceLandmarksDetection NOT FOUND");
-    return;
-  }
-  try{
-    const fld = window.faceLandmarksDetection;
-    model = await fld.load(fld.SupportedPackages.mediapipeFacemesh,{maxFaces:1});
-    $("modelStatus").textContent="ready";
-    $("scanStatus").textContent="Model Ready";
-    log("[SCAN] Model loaded.");
-  }catch(e){
-    $("scanStatus").textContent="Model load failed";
-    log("[SCAN] Model load error: "+e.message);
-  }
+/* UI helpers */
+function addMediaItem(name, blob){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name; a.textContent = name;
+  $('mediaList').prepend(a);
 }
+function clearCanvas(){ const c = $('overlay'); c.getContext('2d').clearRect(0,0,c.width,c.height); }
 
-async function startCamera(){
-  const v=$("video");
-  const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});
-  v.srcObject=s;
-  await v.play();
-  const c=$("overlay");
-  c.width=v.videoWidth||640;
-  c.height=v.videoHeight||480;
-  return s;
+/* math helpers */
+function averagePoint(idxs, landmarks){
+  let x=0,y=0,c=0;
+  for(const i of idxs){ if(!landmarks[i]) continue; x+=landmarks[i][0]; y+=landmarks[i][1]; c++; }
+  return [x/c, y/c];
 }
-
-function computeEAR(u,l){
-  const v=(Math.hypot(u[1][0]-l[5][0],u[1][1]-l[5][1]) + Math.hypot(u[2][0]-l[4][0],u[2][1]-l[4][1]))/2;
-  const h=Math.hypot(u[0][0]-u[3][0],u[0][1]-u[3][1]);
+function computeEAR(upper, lower){
+  const v = (Math.hypot(upper[1][0]-lower[5][0], upper[1][1]-lower[5][1]) +
+             Math.hypot(upper[2][0]-lower[4][0], upper[2][1]-lower[4][1]))/2;
+  const h = Math.hypot(upper[0][0]-upper[3][0], upper[0][1]-upper[3][1]) || 1;
   return v/h;
 }
-
-function avg(pts,lm){
-  let x=0,y=0,c=0;
-  pts.forEach(i=>{ if(lm[i]){x+=lm[i][0];y+=lm[i][1];c++;} });
-  return [x/c,y/c];
+function estimateYaw(landmarks){
+  const left = averagePoint([33,133,159,158], landmarks);
+  const right = averagePoint([362,263,386,387], landmarks);
+  const nose = landmarks[1] || [(left[0]+right[0])/2,(left[1]+right[1])/2];
+  const dxL = nose[0] - left[0];
+  const dxR = right[0] - nose[0];
+  return (dxL - dxR) * 0.5;
 }
-function yaw(lm){
-  const L=avg([33,133],lm);
-  const R=avg([362,263],lm);
-  const N=lm[1];
-  return ( (N[0]-L[0]) - (R[0]-N[0]) )*0.5;
-}
-function pitch(lm){
-  const N=lm[1];
-  const E=avg([33,133,362,263],lm);
-  return (E[1]-N[1]);
+function estimatePitch(landmarks){
+  const nose = landmarks[1] || [0,0];
+  const eyeCenter = averagePoint([33,133,362,263], landmarks);
+  return (eyeCenter[1] - nose[1]);
 }
 
-let running=false;
-async function detectLoop(){
-  running=true;
-  const v=$("video");
-  const ctx=$("overlay").getContext("2d");
-
-  while(running){
-    if(!model){ await new Promise(r=>setTimeout(r,200)); continue; }
-
-    const preds = await model.estimateFaces({input:v,returnTensors:false,flipHorizontal:true});
-    ctx.clearRect(0,0,9999,9999);
-
-    if(preds.length>0){
-      $("faceDetected").textContent="yes";
-      const lm = preds[0].scaledMesh;
-
-      const Y=yaw(lm);
-      const P=pitch(lm);
-
-      const uL=[lm[159],lm[160],lm[158],lm[33]];
-      const lL=[lm[145],lm[144],lm[153],lm[133]];
-      const uR=[lm[386],lm[387],lm[385],lm[362]];
-      const lR=[lm[374],lm[373],lm[380],lm[263]];
-      const EAR=(computeEAR(uL,lL)+computeEAR(uR,lR))/2;
-
-      $("valYaw").textContent=Y.toFixed(2);
-      $("valPitch").textContent=P.toFixed(2);
-      $("valEAR").textContent=EAR.toFixed(3);
-
-      if(EAR<0.18){ $("valBlink").textContent="yes"; } 
-      else $("valBlink").textContent="no";
-
-    } else {
-      $("faceDetected").textContent="no";
-      $("valYaw").textContent="-";
-      $("valPitch").textContent="-";
-      $("valEAR").textContent="-";
-      $("valBlink").textContent="-";
+/* model loader called on start to ensure latest */
+async function loadModel(){
+  $('modelStatus').textContent = 'loading';
+  if(!window.faceLandmarksDetection){
+    $('modelStatus').textContent = 'missing';
+    $('messages').textContent = 'Model library belum tersedia — cek log.';
+    log('loadModel aborted: faceLandmarksDetection missing');
+    return false;
+  }
+  try{
+    if(window.tf && window.tf.setBackend){
+      try{ await window.tf.setBackend('webgl'); log('tf backend webgl set'); }catch(e){ log('tf setBackend failed', e.message || e); }
     }
-
-    await new Promise(r=>setTimeout(r,150));
+    const fld = window.faceLandmarksDetection;
+    model = await fld.load(fld.SupportedPackages.mediapipeFacemesh, {maxFaces:1});
+    $('modelStatus').textContent = 'ready';
+    $('messages').textContent = 'Model siap.';
+    log('model loaded');
+    return true;
+  }catch(e){
+    $('modelStatus').textContent = 'failed';
+    $('messages').textContent = 'Gagal memuat model: ' + (e.message || e);
+    log('model load error', e);
+    return false;
   }
 }
 
-/* ===== UI ===== */
+/* folder picker */
+$('chooseFolderBtn').addEventListener('click', async ()=>{
+  if('showDirectoryPicker' in window){
+    try{
+      folderHandle = await window.showDirectoryPicker();
+      $('messages').textContent = 'Folder terpilih.';
+    }catch(e){
+      $('messages').textContent = 'Pemilihan folder dibatalkan.';
+    }
+  } else {
+    $('messages').textContent = 'Browser tidak mendukung penyimpanan lokal otomatis. ZIP fallback akan digunakan.';
+  }
+});
 
-$("startBtn").onclick = async ()=>{
-  $("startBtn").style.display="none";
-  $("stopBtn").style.display="inline-block";
+/* start camera and recording */
+async function startCameraAndRecord(){
+  try{
+    const s = await navigator.mediaDevices.getUserMedia({video:{width:640,height:480,facingMode:'user'}, audio:true});
+    $('video').srcObject = s;
+    streamRef = s;
+    await $('video').play();
+    const c = $('overlay'); c.width = $('video').videoWidth || 640; c.height = $('video').videoHeight || 480;
+    // start recorder
+    recordedBlobs = []; frameBlobs = [];
+    try{ recorder = new MediaRecorder(streamRef, {mimeType:'video/webm;codecs=vp9,opus'}); }catch(e){ recorder = new MediaRecorder(streamRef); }
+    recorder.ondataavailable = ev => { if(ev.data && ev.data.size) recordedBlobs.push(ev.data); };
+    recorder.start();
+    // capture per second
+    const capCanvas = document.createElement('canvas'); capCanvas.width = c.width; capCanvas.height = c.height;
+    const capCtx = capCanvas.getContext('2d');
+    captureInterval = setInterval(()=>{
+      capCtx.drawImage($('video'),0,0,capCanvas.width,capCanvas.height);
+      capCanvas.toBlob(b=>{
+        const ts = Date.now(); const name = `frame_${ts}.png`;
+        frameBlobs.push({blob:b,name});
+        addMediaItem(name,b);
+      }, 'image/png');
+    }, 1000);
+    return true;
+  }catch(e){
+    $('messages').textContent = 'Gagal akses kamera: ' + (e.message || e);
+    log('camera error', e);
+    return false;
+  }
+}
 
-  await loadModel();
-  await startCamera();
+/* detection + step machine */
+const STEPS = [
+  { id:'center', label:'Hadapkan muka ke tengah', validator: c=> Math.abs(c.avgYaw) < 8 && Math.abs(c.avgPitch) < 10, need: 3 },
+  { id:'left', label:'Miring ke KIRI', validator: c=> c.avgYaw < -12, need: 3 },
+  { id:'right', label:'Miring ke KANAN', validator: c=> c.avgYaw > 12, need: 3 },
+  { id:'blink', label:'Kedipkan mata', validator: c=> c.blinkNow === true, need: 1 },
+  { id:'nod', label:'Angguk kepala', validator: c=> Math.abs(c.avgPitch) > 12, need: 3 }
+];
+let currentStepIndex = 0;
+let yawBuf = [], pitchBuf = [], earBuf = [], lastBlinkTs = 0, consecutive = {};
+const MAX_TIME = 120;
+
+async function detectLoop(){
+  detectLoopActive = true;
+  const startTime = Date.now();
+  const v = $('video'); const overlay = $('overlay'); const ctx = overlay.getContext('2d');
+  // init
+  STEPS.forEach(s=>consecutive[s.id]=0);
+  $('stepLabel').textContent = STEPS[currentStepIndex].label;
+  $('progress').textContent = `0/${STEPS.length}`;
+  $('statusLine').textContent = 'Scanning...';
+
+  while(detectLoopActive){
+    if(!model){ await new Promise(r=>setTimeout(r,200)); continue; }
+    const preds = await model.estimateFaces({input:v, returnTensors:false, flipHorizontal:true});
+    ctx.clearRect(0,0,overlay.width,overlay.height);
+
+    if(preds && preds.length>0){
+      const p = preds[0]; const lm = p.scaledMesh;
+      // draw few points
+      ctx.fillStyle = 'rgba(6,182,212,0.9)';
+      for(let i=0;i<lm.length;i+=12){ ctx.beginPath(); ctx.arc(lm[i][0], lm[i][1], 1.2,0,Math.PI*2); ctx.fill(); }
+      $('faceDetected').textContent = 'yes';
+
+      // values
+      const Y = estimateYaw(lm); const P = estimatePitch(lm);
+      yawBuf.push(Y); if(yawBuf.length>6) yawBuf.shift();
+      pitchBuf.push(P); if(pitchBuf.length>6) pitchBuf.shift();
+
+      const leftUpper=[lm[159],lm[160],lm[158],lm[33]];
+      const leftLower=[lm[145],lm[144],lm[153],lm[133]];
+      const rightUpper=[lm[386],lm[387],lm[385],lm[362]];
+      const rightLower=[lm[374],lm[373],lm[380],lm[263]];
+      const earL = computeEAR(leftUpper,leftLower);
+      const earR = computeEAR(rightUpper,rightLower);
+      const ear = (earL+earR)/2;
+      earBuf.push(ear); if(earBuf.length>10) earBuf.shift();
+
+      // blink detection
+      let blinkNow = false;
+      if(earBuf.length>=3){
+        const a=earBuf[earBuf.length-3], b=earBuf[earBuf.length-2], c=earBuf[earBuf.length-1];
+        if(b < 0.18 && c >= 0.18 && (Date.now()-lastBlinkTs) > 400){ blinkNow=true; lastBlinkTs = Date.now(); }
+      }
+
+      // motion (frame diff)
+      const tmp = document.createElement('canvas'); tmp.width = overlay.width; tmp.height = overlay.height;
+      const tctx = tmp.getContext('2d'); tctx.drawImage(v,0,0,tmp.width,tmp.height);
+      const idata = tctx.getImageData(0,0,tmp.width,tmp.height);
+      let motion = 0;
+      if(!lastFrameData){ lastFrameData = idata; motion = 0; } else {
+        let diff = 0;
+        for(let i=0;i<idata.data.length;i+=4){
+          diff += Math.abs(idata.data[i]-lastFrameData.data[i]);
+          diff += Math.abs(idata.data[i+1]-lastFrameData.data[i+1]);
+          diff += Math.abs(idata.data[i+2]-lastFrameData.data[i+2]);
+        }
+        motion = diff / (idata.data.length/4);
+        lastFrameData = idata;
+      }
+
+      // averages
+      const avgYaw = yawBuf.reduce((a,b)=>a+b,0)/yawBuf.length;
+      const avgPitch = pitchBuf.reduce((a,b)=>a+b,0)/pitchBuf.length;
+
+      $('valYaw').textContent = avgYaw.toFixed(2);
+      $('valPitch').textContent = avgPitch.toFixed(2);
+      $('valEAR').textContent = ear.toFixed(3);
+      $('valBlink').textContent = blinkNow ? 'yes' : 'no';
+      $('valMotion').textContent = motion.toFixed(1);
+
+      // step validation
+      const step = STEPS[currentStepIndex];
+      const ctxObj = { avgYaw, avgPitch, ear, earBuf, blinkNow, motion };
+      const ok = step.validator(ctxObj);
+      if(step.id !== 'blink'){
+        if(ok) consecutive[step.id] = Math.min(step.need, consecutive[step.id] + 1);
+        else consecutive[step.id] = 0;
+        $('mainInstruction').textContent = `${step.label} (${consecutive[step.id]}/${step.need})`;
+      } else {
+        if(ok) consecutive[step.id] = 1;
+        $('mainInstruction').textContent = `${step.label} (${consecutive[step.id]}/${step.need})`;
+      }
+
+      if(consecutive[step.id] >= step.need){
+        $('mainInstruction').textContent = `${step.label} — OK`;
+        currentStepIndex++;
+        $('progress').textContent = `${currentStepIndex}/${STEPS.length}`;
+        if(currentStepIndex < STEPS.length){
+          $('stepLabel').textContent = STEPS[currentStepIndex].label;
+          $('mainInstruction').textContent = `Berhasil: lanjut → ${STEPS[currentStepIndex].label}`;
+          yawBuf=[]; pitchBuf=[]; earBuf=[]; Object.keys(consecutive).forEach(k=>consecutive[k]=0);
+          await new Promise(r=>setTimeout(r,500));
+        } else {
+          // final motion check
+          if(motion > 8){
+            detectLoopActive = false;
+            await finish(true);
+            return;
+          } else {
+            $('mainInstruction').textContent = 'Gerakkan kepala sedikit untuk verifikasi akhir';
+            await new Promise(r=>setTimeout(r,800));
+            if(lastFrameData && motion > 8){ detectLoopActive=false; await finish(true); return; }
+            else { detectLoopActive=false; await finish(false); return; }
+          }
+        }
+      }
+
+    } else {
+      $('faceDetected').textContent = 'no';
+      $('mainInstruction').textContent = STEPS[currentStepIndex].label;
+    }
+
+    // timeout
+    const elapsed = Math.floor((Date.now() - startTime)/1000);
+    if(elapsed >= MAX_TIME){
+      detectLoopActive = false;
+      await finish(false);
+      return;
+    }
+
+    await new Promise(r=>setTimeout(r,120));
+  }
+}
+
+/* finish: save and redirect or retry */
+async function finish(success){
+  $('statusLine').textContent = success ? 'Verifikasi: BERHASIL' : 'Verifikasi: GAGAL';
+  clearInterval(captureInterval);
+  if(recorder && recorder.state !== 'inactive'){ try{ recorder.stop(); }catch(e){} }
+  if(streamRef){ streamRef.getTracks().forEach(t=>t.stop()); streamRef=null; }
+
+  const videoBlob = new Blob(recordedBlobs, {type: recordedBlobs[0]?.type || 'video/webm'});
+  addMediaItem(`scan_result_${Date.now()}.webm`, videoBlob);
+
+  const manifest = { result: success ? 'success' : 'failed', ts: Date.now(), frames_count: frameBlobs.length, video_size: videoBlob.size, steps: STEPS.map(s=>s.id) };
+
+  // try save to folder using File System Access API
+  if(folderHandle && 'getDirectoryHandle' in folderHandle){
+    try{
+      const framesDir = await folderHandle.getDirectoryHandle('frames', {create:true});
+      const vHandle = await folderHandle.getFileHandle(`scan_result_${manifest.ts}.webm`, {create:true});
+      const wv = await vHandle.createWritable(); await wv.write(videoBlob); await wv.close();
+      for(const f of frameBlobs){
+        const fh = await framesDir.getFileHandle(f.name, {create:true});
+        const wf = await fh.createWritable(); await wf.write(f.blob); await wf.close();
+      }
+      const mf = await folderHandle.getFileHandle(`manifest_${manifest.ts}.json`, {create:true});
+      const wm = await mf.createWritable(); await wm.write(JSON.stringify(manifest,null,2)); await wm.close();
+      $('messages').textContent = `Tersimpan ke folder lokal (${success ? 'success' : 'failed'}).`;
+    }catch(e){
+      log('save to folder failed', e);
+      await saveAsZip(videoBlob, frameBlobs, manifest);
+    }
+  } else {
+    await saveAsZip(videoBlob, frameBlobs, manifest);
+  }
+
+  if(success){
+    setTimeout(()=>{ window.location.href = `result.html?result=success&ts=${manifest.ts}`; }, 700);
+  } else {
+    $('statusLine').textContent = 'Gagal — Tekan Mulai Scan untuk ulang.';
+    $('startBtn').style.display = 'inline-block';
+    $('stopBtn').style.display = 'none';
+  }
+}
+
+/* zip fallback */
+async function saveAsZip(videoBlob, frames, manifest){
+  const zip = new JSZip();
+  if(videoBlob && videoBlob.size>0) zip.file(`scan_result_${manifest.ts}.webm`, videoBlob);
+  const fdir = zip.folder('frames');
+  for(const f of frames) fdir.file(f.name, f.blob);
+  zip.file(`manifest_${manifest.ts}.json`, JSON.stringify(manifest,null,2));
+  const content = await zip.generateAsync({type:'blob'});
+  const url = URL.createObjectURL(content);
+  const a = document.createElement('a'); a.href = url; a.download = `scan_media_${manifest.ts}.zip`; a.click();
+  URL.revokeObjectURL(url);
+  $('messages').textContent = 'Hasil disimpan sebagai ZIP (fallback).';
+}
+
+/* start/stop UI handlers */
+$('startBtn').addEventListener('click', async ()=>{
+  $('startBtn').style.display = 'none';
+  $('stopBtn').style.display = 'inline-block';
+  $('statusLine').textContent = 'Memulai...';
+  // ensure libs loaded & model ready
+  await ensureLibraries();
+  const ok = await loadModel();
+  if(!ok){ $('statusLine').textContent = 'Model tidak tersedia'; $('startBtn').style.display='inline-block'; $('stopBtn').style.display='none'; return; }
+  const camOk = await startCameraAndRecord();
+  if(!camOk){ $('statusLine').textContent = 'Tidak dapat akses kamera'; $('startBtn').style.display='inline-block'; $('stopBtn').style.display='none'; return; }
   detectLoop();
-};
+});
 
-$("stopBtn").onclick = ()=>{
-  running=false;
-  $("stopBtn").style.display="none";
-  $("startBtn").style.display="inline-block";
-  $("scanStatus").textContent="Stopped";
-};
+$('stopBtn').addEventListener('click', ()=>{
+  detectLoopActive = false;
+  if(captureInterval) clearInterval(captureInterval);
+  if(recorder && recorder.state !== 'inactive'){ try{ recorder.stop(); }catch(e){} }
+  if(streamRef){ streamRef.getTracks().forEach(t=>t.stop()); streamRef=null; }
+  $('startBtn').style.display = 'inline-block';
+  $('stopBtn').style.display = 'none';
+  $('statusLine').textContent = 'Dihentikan.';
+});
+
+/* cleanup on unload */
+window.addEventListener('beforeunload', ()=>{ if(streamRef) streamRef.getTracks().forEach(t=>t.stop()); });
 </script>
-
 </body>
 </html>
