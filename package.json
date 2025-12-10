@@ -1,5 +1,5 @@
 {
-  "name": "premcam",
+  "name": "face-detect-demo",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -10,8 +10,6 @@
   "dependencies": {
     "next": "13.5.6",
     "react": "18.2.0",
-    "react-dom": "18.2.0",
-    "form-data": "^4.0.0",
-    "node-fetch": "3.3.2"
+    "react-dom": "18.2.0"
   }
 }
