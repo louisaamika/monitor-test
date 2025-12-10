@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect } from "react"
 
 export default function Home() {
   const videoRef = useRef(null)
@@ -8,6 +8,7 @@ export default function Home() {
 
   const [running, setRunning] = useState(false)
   const [cameraStatus, setCameraStatus] = useState("off") // off, connected, failed
+  const [previewActive, setPreviewActive] = useState(false)
   const [moduleStatus, setModuleStatus] = useState("idle") // idle, proses, sukses, gagal
   const [logs, setLogs] = useState([])
   const [duration, setDuration] = useState(0)
@@ -18,54 +19,79 @@ export default function Home() {
   const version = "v5.81"
   const mode = "live stream"
 
-  function uid(len = 10) {
-    const c = "abcdefghijklmnopqrstuvwxyz0123456789"
+  function uid(len = 12) {
+    const chars = "abcdefghijklmnopqrstuvwxyz0123456789"
     let s = ""
-    for (let i = 0; i < len; i++) s += c[Math.floor(Math.random() * c.length)]
+    for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)]
     return s
   }
 
   function addLog(type, msg) {
-    setLogs(l => [...l, { id: uid(), t: Date.now(), type, msg }])
+    setLogs((l) => [...l, { id: uid(10), t: Date.now(), type, msg }])
   }
 
+  // initial build logs (demo)
   useEffect(() => {
-    addLog("system", "build: starting…")
-    setTimeout(() => addLog("system", "build: compiling modules…"), 300)
-    setTimeout(() => addLog("system", "build: ready."), 600)
+    addLog("build", "build: starting...")
+    setTimeout(() => addLog("build", "build: compiling modules..."), 300)
+    setTimeout(() => addLog("build", "build: ready"), 700)
   }, [])
 
+  // duration timer
   useEffect(() => {
     let timer
-    if (running) {
+    if (running && startTimeRef.current) {
       timer = setInterval(() => {
         setDuration(Math.floor((Date.now() - startTimeRef.current) / 1000))
       }, 500)
+    } else {
+      setDuration(0)
     }
     return () => clearInterval(timer)
   }, [running])
 
+  // auto scroll windowStart if logs shrink/grow
+  useEffect(() => {
+    if (logs.length <= 12) setLogStart(0)
+    else if (logStart > logs.length - 12) setLogStart(Math.max(0, logs.length - 12))
+  }, [logs.length])
+
   async function startCamera() {
-    addLog("system", "requesting camera permission…")
+    addLog("system", "requesting camera permission...")
     setModuleStatus("proses")
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
       setCameraStatus("connected")
+
+      // set resolution from track settings if available
       const track = stream.getVideoTracks()[0]
       const s = track.getSettings()
       setResolution(`${s.width || 640}x${s.height || 480}`)
-      videoRef.current.srcObject = stream
-      await videoRef.current.play()
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        try {
+          await videoRef.current.play()
+          setPreviewActive(true)
+          addLog("system", "video.play() ok, preview active")
+        } catch (playErr) {
+          // autoplay policies can block play(); preview still considered active if srcObject exists
+          setPreviewActive(!!videoRef.current.srcObject)
+          addLog("error", "video.play() failed: " + (playErr?.message || playErr))
+        }
+      } else {
+        setPreviewActive(true)
+      }
 
       startTimeRef.current = Date.now()
       setRunning(true)
 
+      // start capture interval: 1 photo per second (demo)
       let frames = 0
       let t0 = performance.now()
-
       intervalRef.current = setInterval(() => {
-        capture()
+        captureOnce()
         frames++
         const now = performance.now()
         if (now - t0 >= 1000) {
@@ -75,9 +101,9 @@ export default function Home() {
         }
       }, 1000)
 
-      addLog("system", "camera permission granted. start capture.")
+      addLog("system", "camera permission granted. auto-capture started (1s).")
     } catch (err) {
-      addLog("error", "permission denied or device error.")
+      addLog("error", "camera permission denied or device error: " + (err?.message || err))
       setCameraStatus("failed")
       setModuleStatus("gagal")
       stopAll(false)
@@ -93,16 +119,22 @@ export default function Home() {
       intervalRef.current = null
     }
 
-    if (stopStream && videoRef.current && videoRef.current.srcObject) {
-      videoRef.current.srcObject.getTracks().forEach(t => t.stop())
-      videoRef.current.srcObject = null
+    const stream = videoRef.current?.srcObject
+    if (stream && stopStream) {
+      try {
+        stream.getTracks().forEach((t) => t.stop())
+      } catch (e) {
+        // ignore
+      }
+      if (videoRef.current) videoRef.current.srcObject = null
     }
 
+    setPreviewActive(false)
     if (cameraStatus !== "failed") setCameraStatus("off")
-    addLog("system", "stopped all.")
+    addLog("system", "stopped all processes.")
   }
 
-  function toggle() {
+  function toggleStartStop() {
     if (running) {
       addLog("system", "user pressed STOP")
       stopAll()
@@ -112,31 +144,39 @@ export default function Home() {
     }
   }
 
-  function capture() {
+  function captureOnce() {
     const v = videoRef.current
-    if (!v) return
+    if (!v) {
+      addLog("error", "capture aborted: video element not ready")
+      return
+    }
     const w = v.videoWidth || 640
     const h = v.videoHeight || 480
-
-    canvasRef.current.width = w
-    canvasRef.current.height = h
-    const ctx = canvasRef.current.getContext("2d")
+    const c = canvasRef.current
+    c.width = w
+    c.height = h
+    const ctx = c.getContext("2d")
     ctx.drawImage(v, 0, 0, w, h)
 
-    const id = uid(12)
-    const conf = (Math.random() * 0.5 + 0.5).toFixed(2)
+    // simulate face detection: emit a log with UID, no filename
+    const detectionUid = uid(14)
+    const conf = (Math.random() * 0.4 + 0.5).toFixed(2)
+    addLog("detect", `detected face uid:${detectionUid} confidence:${conf}`)
 
-    addLog("detect", `face uid:${id} conf:${conf}`)
-
-    canvasRef.current.toBlob(blob => {
-      addLog("system", `photo blob -> uid:${id} size:${blob?.size || 0}`)
+    // produce a blob just to simulate size and add a system log (no filename)
+    c.toBlob((blob) => {
+      addLog("system", `photo captured -> uid:${detectionUid} (blob size:${blob?.size || 0})`)
+      // occasionally mark success
       if (Math.random() > 0.85) {
         setModuleStatus("sukses")
-        addLog("system", "module sukses")
+        addLog("system", "module status: sukses")
+      } else {
+        setModuleStatus("proses")
       }
-    })
+    }, "image/png")
   }
 
+  // visible logs window
   const visibleLogs = logs.slice(logStart, logStart + 12)
 
   return (
@@ -144,22 +184,23 @@ export default function Home() {
       <div style={styles.topbar}>
         <div style={{ fontWeight: 700 }}>Face Detect Demo</div>
 
-        <div style={{ display: "flex", gap: 10 }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
           <button
+            onClick={toggleStartStop}
             style={running ? styles.btnStop : styles.btnStart}
-            onClick={toggle}
           >
             {running ? "STOP" : "START"}
           </button>
-          <div style={styles.info}>Mode: {mode}</div>
-          <div style={styles.info}>Versi: {version}</div>
-          <div style={styles.info}>Durasi: {duration}s</div>
+
+          <div style={styles.badge}>Mode: {mode}</div>
+          <div style={styles.badge}>Versi: {version}</div>
+          <div style={styles.badge}>Durasi: {duration}s</div>
         </div>
       </div>
 
       <div style={styles.main}>
         <div style={styles.monitor}>
-          {running && cameraStatus === "connected" ? (
+          {(previewActive || (videoRef.current && videoRef.current.srcObject)) ? (
             <video
               ref={videoRef}
               autoPlay
@@ -169,34 +210,30 @@ export default function Home() {
             />
           ) : (
             <div style={styles.monitorOff}>
-              {cameraStatus === "failed" ? "CAMERA FAILED" : "MONITOR OFF"}
+              {cameraStatus === "failed" ? "CAMERA FAILED — permission or device error" : "MONITOR OFF — press START"}
             </div>
           )}
         </div>
 
         <div style={styles.sidebar}>
-
-          {/* SYSTEM INFO */}
           <div style={styles.card}>
             <div style={styles.cardTitle}>System Info</div>
-
             <div style={styles.row}><span>Status Kamera</span><b>{cameraStatus}</b></div>
-            <div style={styles.row}><span>Module Status</span><b>{moduleStatus}</b></div>
+            <div style={styles.row}><span>Mode</span><b>{mode}</b></div>
+            <div style={styles.row}><span>Versi Modul</span><b>{version}</b></div>
+            <div style={styles.row}><span>Status Modul</span><b>{moduleStatus}</b></div>
             <div style={styles.row}><span>FPS</span><b>{fps}</b></div>
             <div style={styles.row}><span>Resolusi</span><b>{resolution}</b></div>
           </div>
 
-          {/* LOGS */}
           <div style={styles.card}>
             <div style={styles.cardTitle}>Logs ({logs.length})</div>
-
             <div style={styles.logBox}>
-              {visibleLogs.map(l => (
-                <div key={l.id} style={styles.logItem}>
-                  <span style={{ opacity: 0.7, fontSize: 12 }}>
-                    {new Date(l.t).toLocaleTimeString()}
-                  </span>
-                  <div>{l.msg}</div>
+              {visibleLogs.length === 0 && <div style={styles.logEmpty}>no logs yet</div>}
+              {visibleLogs.map((l) => (
+                <div key={l.id} style={{ ...styles.logItem, ...(colorForType(l.type)) }}>
+                  <div style={styles.logTime}>{new Date(l.t).toLocaleTimeString()}</div>
+                  <div style={styles.logText}>{l.msg}</div>
                 </div>
               ))}
             </div>
@@ -205,10 +242,10 @@ export default function Home() {
               <input
                 type="range"
                 min={0}
-                max={logs.length - 12}
+                max={Math.max(0, logs.length - 12)}
                 value={logStart}
-                onChange={e => setLogStart(Number(e.target.value))}
-                style={{ width: "100%" }}
+                onChange={(e) => setLogStart(Number(e.target.value))}
+                style={{ width: "100%", marginTop: 8 }}
               />
             )}
           </div>
@@ -216,103 +253,143 @@ export default function Home() {
       </div>
 
       <canvas ref={canvasRef} style={{ display: "none" }} />
+
+      {/* inline styles */}
+      <style jsx>{`
+        @media (max-width: 900px) {
+          .responsive-main {
+            flex-direction: column;
+          }
+        }
+      `}</style>
     </div>
   )
 }
 
+// small helper to color log items by type
+function colorForType(t) {
+  if (t === "error") return { background: "rgba(255,107,107,0.08)" }
+  if (t === "detect") return { background: "rgba(99,102,241,0.06)" }
+  if (t === "system") return { background: "rgba(34,197,94,0.04)" }
+  if (t === "build") return { background: "rgba(59,130,246,0.04)" }
+  return { background: "rgba(255,255,255,0.02)" }
+}
+
 const styles = {
   page: {
-    padding: 20,
-    background: "#0f172a",
+    padding: 18,
+    background: "#071027",
     minHeight: "100vh",
-    color: "#e2e8f0",
-    fontFamily: "sans-serif"
+    color: "#e6eef8",
+    fontFamily: "Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial",
   },
   topbar: {
     display: "flex",
     justifyContent: "space-between",
-    marginBottom: 20,
-    alignItems: "center"
+    alignItems: "center",
+    marginBottom: 16,
   },
   btnStart: {
-    background: "#22c55e",
-    color: "#052e16",
+    background: "linear-gradient(90deg,#22c55e,#16a34a)",
+    color: "#04260f",
     padding: "8px 14px",
-    border: "0",
+    border: "none",
     borderRadius: 8,
-    fontWeight: "bold",
-    cursor: "pointer"
+    fontWeight: 700,
+    cursor: "pointer",
   },
   btnStop: {
-    background: "#ef4444",
-    color: "white",
+    background: "linear-gradient(90deg,#ef4444,#dc2626)",
+    color: "#fff",
     padding: "8px 14px",
-    border: "0",
+    border: "none",
     borderRadius: 8,
-    fontWeight: "bold",
-    cursor: "pointer"
+    fontWeight: 700,
+    cursor: "pointer",
   },
-  info: {
-    background: "rgba(255,255,255,0.05)",
+  badge: {
+    background: "rgba(255,255,255,0.04)",
     padding: "6px 10px",
-    borderRadius: 6,
-    fontSize: 13
+    borderRadius: 8,
+    fontSize: 13,
   },
   main: {
     display: "flex",
-    gap: 20
+    gap: 18,
+    alignItems: "flex-start",
   },
   monitor: {
     flex: 1,
-    background: "black",
-    height: 400,
+    background: "#000",
     borderRadius: 10,
-    overflow: "hidden",
+    height: 420,
     display: "flex",
     alignItems: "center",
-    justifyContent: "center"
+    justifyContent: "center",
+    overflow: "hidden",
+    boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
   },
   video: {
     width: "100%",
     height: "100%",
-    objectFit: "cover"
+    objectFit: "cover",
+    display: "block",
   },
   monitorOff: {
     color: "#94a3b8",
-    fontSize: 18
+    fontSize: 16,
+    textAlign: "center",
+    padding: 12,
   },
   sidebar: {
-    width: 350,
+    width: 360,
     display: "flex",
     flexDirection: "column",
-    gap: 20
+    gap: 14,
   },
   card: {
-    padding: 14,
-    background: "#1e293b",
-    borderRadius: 10
+    padding: 12,
+    background: "linear-gradient(180deg,#041827,#071229)",
+    borderRadius: 10,
   },
   cardTitle: {
-    fontWeight: 700,
-    marginBottom: 10
+    fontWeight: 800,
+    marginBottom: 8,
   },
   row: {
     display: "flex",
     justifyContent: "space-between",
     padding: "6px 0",
-    borderBottom: "1px solid rgba(255,255,255,0.05)"
+    borderBottom: "1px dashed rgba(255,255,255,0.03)",
   },
   logBox: {
-    maxHeight: 250,
+    maxHeight: 260,
     overflowY: "auto",
     display: "flex",
     flexDirection: "column",
-    gap: 8
+    gap: 8,
+  },
+  logEmpty: {
+    color: "#94a3b8",
+    padding: 10,
+    textAlign: "center",
   },
   logItem: {
-    background: "rgba(255,255,255,0.05)",
     padding: 8,
-    borderRadius: 6,
-    fontSize: 13
-  }
+    borderRadius: 8,
+    display: "flex",
+    gap: 10,
+    alignItems: "flex-start",
+  },
+  logTime: {
+    minWidth: 70,
+    fontFamily: "monospace",
+    fontSize: 12,
+    opacity: 0.8,
+    color: "#9fb6d9",
+  },
+  logText: {
+    fontSize: 13,
+    color: "#e6f0ff",
+  },
 }
