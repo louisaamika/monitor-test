@@ -199,22 +199,60 @@ export default function Home() {
       </div>
 
       <div style={styles.main}>
-        <div style={styles.monitor}>
-          {(previewActive || (videoRef.current && videoRef.current.srcObject)) ? (
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              style={styles.video}
-            />
-          ) : (
-            <div style={styles.monitorOff}>
-              {cameraStatus === "failed" ? "CAMERA FAILED — permission or device error" : "MONITOR OFF — press START"}
+        {/* Monitor area: styled as real camera preview screen with frame, overlays, and controls */}
+        <div style={styles.monitorWrap}>
+          <div style={styles.monitorFrame}>
+            {/* inner screen */}
+            <div style={styles.screen}>
+              {(previewActive || (videoRef.current && videoRef.current.srcObject)) ? (
+                <>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    style={styles.video}
+                  />
+                  {/* overlay top: status, resolution */}
+                  <div style={styles.overlayTop}>
+                    <div style={styles.recDotRow}>
+                      <div style={styles.recDot} />
+                      <div style={{ marginLeft: 8, fontSize: 13 }}>REC</div>
+                    </div>
+                    <div style={{ fontSize: 13 }}>{resolution}</div>
+                  </div>
+
+                  {/* overlay bottom: small controls / hint */}
+                  <div style={styles.overlayBottom}>
+                    <div style={{ fontSize: 13 }}>Preview • Live camera</div>
+                    <div style={{ fontSize: 13 }}>FPS: {fps} • Logs: {logs.length}</div>
+                  </div>
+
+                  {/* simulated focus box / detection hint */}
+                  <div style={styles.detectBox} />
+                </>
+              ) : (
+                <div style={styles.monitorOff}>
+                  {cameraStatus === "failed" ? "CAMERA FAILED — permission or device error" : "MONITOR OFF — press START"}
+                </div>
+              )}
             </div>
-          )}
+
+            {/* physical-like bezel with notch/buttons */}
+            <div style={styles.bezel}>
+              <div style={styles.bezelLeft} />
+              <div style={styles.bezelRight} />
+            </div>
+          </div>
+
+          {/* small monitor footer with duration and module status */}
+          <div style={styles.monitorFooter}>
+            <div>Module: {moduleStatus}</div>
+            <div>Elapsed: {duration}s</div>
+          </div>
         </div>
 
+        {/* Sidebar */}
         <div style={styles.sidebar}>
           <div style={styles.card}>
             <div style={styles.cardTitle}>System Info</div>
@@ -254,7 +292,6 @@ export default function Home() {
 
       <canvas ref={canvasRef} style={{ display: "none" }} />
 
-      {/* inline styles */}
       <style jsx>{`
         @media (max-width: 900px) {
           .responsive-main {
@@ -318,16 +355,30 @@ const styles = {
     gap: 18,
     alignItems: "flex-start",
   },
-  monitor: {
+
+  // Monitor-specific styles
+  monitorWrap: {
     flex: 1,
-    background: "#000",
-    borderRadius: 10,
+    display: "flex",
+    flexDirection: "column",
+    gap: 10,
+  },
+  monitorFrame: {
+    borderRadius: 12,
+    padding: 12,
+    background: "linear-gradient(180deg,#0b1220,#071027)",
+    boxShadow: "0 12px 40px rgba(2,6,23,0.6)",
+  },
+  screen: {
+    position: "relative",
+    width: "100%",
     height: 420,
+    background: "#000",
+    borderRadius: 8,
+    overflow: "hidden",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    overflow: "hidden",
-    boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
   },
   video: {
     width: "100%",
@@ -335,12 +386,86 @@ const styles = {
     objectFit: "cover",
     display: "block",
   },
+  overlayTop: {
+    position: "absolute",
+    top: 10,
+    left: 12,
+    right: 12,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    pointerEvents: "none",
+    color: "#fff",
+    opacity: 0.95,
+  },
+  overlayBottom: {
+    position: "absolute",
+    bottom: 10,
+    left: 12,
+    right: 12,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    pointerEvents: "none",
+    color: "#fff",
+    opacity: 0.85,
+  },
+  recDotRow: {
+    display: "flex",
+    alignItems: "center",
+    fontWeight: 700,
+    color: "#fff",
+  },
+  recDot: {
+    width: 10,
+    height: 10,
+    borderRadius: "50%",
+    background: "#ff2b2b",
+    boxShadow: "0 0 8px rgba(255,43,43,0.9)",
+  },
+  detectBox: {
+    position: "absolute",
+    width: "40%",
+    height: "30%",
+    border: "2px dashed rgba(255,255,255,0.18)",
+    borderRadius: 8,
+    top: "35%",
+    left: "30%",
+    pointerEvents: "none",
+    boxShadow: "inset 0 0 30px rgba(0,0,0,0.4)",
+  },
+  bezel: {
+    marginTop: 8,
+    display: "flex",
+    justifyContent: "space-between",
+  },
+  bezelLeft: {
+    width: 60,
+    height: 8,
+    background: "rgba(255,255,255,0.03)",
+    borderRadius: 6,
+  },
+  bezelRight: {
+    width: 140,
+    height: 8,
+    background: "rgba(255,255,255,0.03)",
+    borderRadius: 6,
+  },
   monitorOff: {
     color: "#94a3b8",
     fontSize: 16,
     textAlign: "center",
     padding: 12,
   },
+  monitorFooter: {
+    display: "flex",
+    justifyContent: "space-between",
+    color: "#9fb6d9",
+    fontSize: 13,
+    paddingTop: 6,
+  },
+
+  // Sidebar
   sidebar: {
     width: 360,
     display: "flex",
