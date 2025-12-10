@@ -30,14 +30,12 @@ export default function Home() {
     setLogs((l) => [...l, { id: uid(10), t: Date.now(), type, msg }])
   }
 
-  // initial build logs (demo)
   useEffect(() => {
     addLog("build", "build: starting...")
     setTimeout(() => addLog("build", "build: compiling modules..."), 300)
     setTimeout(() => addLog("build", "build: ready"), 700)
   }, [])
 
-  // duration timer
   useEffect(() => {
     let timer
     if (running && startTimeRef.current) {
@@ -50,7 +48,6 @@ export default function Home() {
     return () => clearInterval(timer)
   }, [running])
 
-  // auto scroll windowStart if logs shrink/grow
   useEffect(() => {
     if (logs.length <= 12) setLogStart(0)
     else if (logStart > logs.length - 12) setLogStart(Math.max(0, logs.length - 12))
@@ -61,13 +58,64 @@ export default function Home() {
     setModuleStatus("proses")
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false })
-      setCameraStatus("connected")
+      // try enumerateDevices to pick front camera if available
+      let devices = []
+      try {
+        devices = await navigator.mediaDevices.enumerateDevices()
+      } catch (e) {
+        addLog("system", "enumerateDevices failed: " + (e?.message || e))
+      }
 
-      // set resolution from track settings if available
+      const videoInputs = devices.filter((d) => d.kind === "videoinput")
+      let preferredDeviceId = null
+
+      if (videoInputs.length) {
+        // prefer devices with labels containing common front-camera keywords
+        const front = videoInputs.find((d) => /front|facing|user|selfie/i.test(d.label))
+        if (front) preferredDeviceId = front.deviceId
+        else {
+          // fallback heuristic: many mobiles list front camera last
+          preferredDeviceId = videoInputs.length > 1 ? videoInputs[videoInputs.length - 1].deviceId : videoInputs[0].deviceId
+        }
+      }
+
+      let stream = null
+      const baseConstraints = { audio: false }
+
+      if (preferredDeviceId) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            ...baseConstraints,
+            video: { deviceId: { exact: preferredDeviceId } },
+          })
+          addLog("system", "opened preferred deviceId camera")
+        } catch (e) {
+          addLog("system", "failed open deviceId, will fallback to facingMode:user -> " + (e?.message || e))
+          stream = null
+        }
+      }
+
+      if (!stream) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            ...baseConstraints,
+            video: { facingMode: { ideal: "user" }, width: { ideal: 640 }, height: { ideal: 480 } },
+          })
+          addLog("system", "opened facingMode:user camera")
+        } catch (e) {
+          addLog("system", "facingMode:user failed -> " + (e?.message || e))
+          // final generic fallback
+          stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true })
+          addLog("system", "opened generic video camera")
+        }
+      }
+
+      if (!stream) throw new Error("no-stream")
+
+      setCameraStatus("connected")
       const track = stream.getVideoTracks()[0]
-      const s = track.getSettings()
-      setResolution(`${s.width || 640}x${s.height || 480}`)
+      const s = track.getSettings ? track.getSettings() : {}
+      setResolution(`${s.width || 480}x${s.height || 640}`)
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream
@@ -76,7 +124,6 @@ export default function Home() {
           setPreviewActive(true)
           addLog("system", "video.play() ok, preview active")
         } catch (playErr) {
-          // autoplay policies can block play(); preview still considered active if srcObject exists
           setPreviewActive(!!videoRef.current.srcObject)
           addLog("error", "video.play() failed: " + (playErr?.message || playErr))
         }
@@ -87,7 +134,7 @@ export default function Home() {
       startTimeRef.current = Date.now()
       setRunning(true)
 
-      // start capture interval: 1 photo per second (demo)
+      // capture interval (1s)
       let frames = 0
       let t0 = performance.now()
       intervalRef.current = setInterval(() => {
@@ -158,15 +205,12 @@ export default function Home() {
     const ctx = c.getContext("2d")
     ctx.drawImage(v, 0, 0, w, h)
 
-    // simulate face detection: emit a log with UID, no filename
     const detectionUid = uid(14)
     const conf = (Math.random() * 0.4 + 0.5).toFixed(2)
     addLog("detect", `detected face uid:${detectionUid} confidence:${conf}`)
 
-    // produce a blob just to simulate size and add a system log (no filename)
     c.toBlob((blob) => {
       addLog("system", `photo captured -> uid:${detectionUid} (blob size:${blob?.size || 0})`)
-      // occasionally mark success
       if (Math.random() > 0.85) {
         setModuleStatus("sukses")
         addLog("system", "module status: sukses")
@@ -176,7 +220,6 @@ export default function Home() {
     }, "image/png")
   }
 
-  // visible logs window
   const visibleLogs = logs.slice(logStart, logStart + 12)
 
   return (
@@ -185,10 +228,7 @@ export default function Home() {
         <div style={{ fontWeight: 700 }}>Face Detect Demo</div>
 
         <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
-          <button
-            onClick={toggleStartStop}
-            style={running ? styles.btnStop : styles.btnStart}
-          >
+          <button onClick={toggleStartStop} style={running ? styles.btnStop : styles.btnStart}>
             {running ? "STOP" : "START"}
           </button>
 
@@ -199,21 +239,12 @@ export default function Home() {
       </div>
 
       <div style={styles.main}>
-        {/* Monitor area: styled as real camera preview screen with frame, overlays, and controls */}
         <div style={styles.monitorWrap}>
           <div style={styles.monitorFrame}>
-            {/* inner screen */}
             <div style={styles.screen}>
               {(previewActive || (videoRef.current && videoRef.current.srcObject)) ? (
                 <>
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    style={styles.video}
-                  />
-                  {/* overlay top: status, resolution */}
+                  <video ref={videoRef} autoPlay playsInline muted style={styles.video} />
                   <div style={styles.overlayTop}>
                     <div style={styles.recDotRow}>
                       <div style={styles.recDot} />
@@ -222,13 +253,11 @@ export default function Home() {
                     <div style={{ fontSize: 13 }}>{resolution}</div>
                   </div>
 
-                  {/* overlay bottom: small controls / hint */}
                   <div style={styles.overlayBottom}>
                     <div style={{ fontSize: 13 }}>Preview • Live camera</div>
                     <div style={{ fontSize: 13 }}>FPS: {fps} • Logs: {logs.length}</div>
                   </div>
 
-                  {/* simulated focus box / detection hint */}
                   <div style={styles.detectBox} />
                 </>
               ) : (
@@ -238,21 +267,18 @@ export default function Home() {
               )}
             </div>
 
-            {/* physical-like bezel with notch/buttons */}
             <div style={styles.bezel}>
               <div style={styles.bezelLeft} />
               <div style={styles.bezelRight} />
             </div>
           </div>
 
-          {/* small monitor footer with duration and module status */}
           <div style={styles.monitorFooter}>
             <div>Module: {moduleStatus}</div>
             <div>Elapsed: {duration}s</div>
           </div>
         </div>
 
-        {/* Sidebar */}
         <div style={styles.sidebar}>
           <div style={styles.card}>
             <div style={styles.cardTitle}>System Info</div>
@@ -303,7 +329,6 @@ export default function Home() {
   )
 }
 
-// small helper to color log items by type
 function colorForType(t) {
   if (t === "error") return { background: "rgba(255,107,107,0.08)" }
   if (t === "detect") return { background: "rgba(99,102,241,0.06)" }
@@ -355,8 +380,6 @@ const styles = {
     gap: 18,
     alignItems: "flex-start",
   },
-
-  // Monitor-specific styles
   monitorWrap: {
     flex: 1,
     display: "flex",
@@ -464,8 +487,6 @@ const styles = {
     fontSize: 13,
     paddingTop: 6,
   },
-
-  // Sidebar
   sidebar: {
     width: 360,
     display: "flex",
