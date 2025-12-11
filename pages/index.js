@@ -1,8 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 
-// Themed Face Analyzer single-file React component
-// Uses Tailwind CSS utility classes for styling (no external CSS file)
-// Behavior: keeps original logic but upgrades UI to match requested theme.
+// Face Analyzer - Themed to match provided dashboard colors (deep navy + cyan/green/purple accents).
+// Single-file React component. No external panel/editor required.
+// Keep original mechanics (start → ask permission → start view / logs / hide button; handle denied permission).
+//
+// Notes:
+// - You can drop this file into a React app. It uses inline styles + utility classes; Tailwind classnames are left
+//   for convenience but styling is mainly controlled via the color variables below so it also works with plain CSS setups.
 
 const API_ENDPOINT = {
   url: 'https://demo.api4ai.cloud/face-analyzer/v1/results',
@@ -10,24 +14,37 @@ const API_ENDPOINT = {
 };
 
 export default function FaceAnalyzerSingleView() {
+  // refs
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
   const abortRef = useRef(false);
 
+  // state
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [sending, setSending] = useState(false);
-  const [infoLog, setInfoLog] = useState([]); // each entry: {ts, text, level}
+  const [infoLog, setInfoLog] = useState([]); // entries: { ts, text, level }
   const [showStartButton, setShowStartButton] = useState(true);
   const [status, setStatus] = useState('idle'); // idle, requesting, active, detecting, processing, success, error
   const [startAt, setStartAt] = useState(null);
   const [detectedAt, setDetectedAt] = useState(null);
 
-  // pushLog supports level: info, warn, error, success
+  // theme colours (match screenshot feel)
+  const THEME = {
+    background: '#081026', // deep navy
+    card: '#0b1220', // card dark
+    cardBorder: 'rgba(255,255,255,0.03)',
+    accentCyan: '#57d7ff',
+    accentGreen: '#39e07a',
+    accentPurple: '#b77bff',
+    mutedText: 'rgba(220,230,255,0.55)',
+    logBg: 'rgba(6,12,22,0.6)'
+  };
+
   const pushLog = (text, level = 'info') => {
     const entry = { ts: new Date(), text, level };
-    setInfoLog((p) => [entry, ...p].slice(0, 200));
-    // still console for debugging
+    setInfoLog((p) => [entry, ...p].slice(0, 300));
+    // keep console debug
     console.log(`${entry.ts.toLocaleString('id-ID')} — [${level}] ${text}`);
   };
 
@@ -72,7 +89,7 @@ export default function FaceAnalyzerSingleView() {
         if (playPromise && playPromise.catch) playPromise.catch(() => {});
       }
 
-      // Wait for a frame to be ready
+      // wait for a stabilized frame
       await new Promise((res) => {
         const video = videoRef.current;
         if (!video) return res();
@@ -82,13 +99,12 @@ export default function FaceAnalyzerSingleView() {
           res();
         };
         video.addEventListener('loadeddata', onLoaded);
-        // fallback timeout
         setTimeout(res, 800);
       });
 
-      // start capture loop until valid face detected or aborted
+      // capture loop
       let attempt = 0;
-      const maxAttempts = 12; // safety to avoid infinite loop
+      const maxAttempts = 12;
 
       while (!abortRef.current) {
         attempt += 1;
@@ -120,7 +136,6 @@ export default function FaceAnalyzerSingleView() {
           else result = await res.text();
 
           pushLog(`Status API: ${res.status}`, 'info');
-          pushLog(`Response singkat: ${typeof result === 'string' ? result.slice(0, 200) : JSON.stringify(result).slice(0, 200)}`, 'info');
 
           const valid = checkFaceValid(result);
           if (valid) {
@@ -207,7 +222,6 @@ export default function FaceAnalyzerSingleView() {
     };
   }, []);
 
-  // helper to render elapsed duration
   const renderDuration = () => {
     if (!startAt) return '--';
     const end = detectedAt || new Date();
@@ -218,137 +232,204 @@ export default function FaceAnalyzerSingleView() {
     return `${h}h ${m}m ${s}s`;
   };
 
-  // log line renderer: single-line formatted with color based on level
   const renderLogLine = (entry, idx) => {
     const time = entry.ts.toLocaleTimeString('id-ID');
-    const base = 'text-sm leading-tight break-words';
-    const color = entry.level === 'error' ? 'text-red-400' : entry.level === 'warn' ? 'text-yellow-300' : entry.level === 'success' ? 'text-green-300' : 'text-sky-200';
+    const color = entry.level === 'error'
+      ? THEME.accentPurple // use purple for errors to match screenshot purple emphasis
+      : entry.level === 'warn'
+        ? THEME.accentGreen
+        : entry.level === 'success'
+          ? THEME.accentGreen
+          : THEME.accentCyan;
+
+    const style = {
+      color,
+      whiteSpace: 'pre-wrap'
+    };
+
     return (
-      <div key={idx} className={`flex items-start gap-3 ${base}`}>
-        <div className="w-20 text-xs text-zinc-400">{time}</div>
-        <div className={`${color} flex-1`}>{entry.text}</div>
+      <div key={idx} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', fontSize: 13, lineHeight: 1.25 }}>
+        <div style={{ width: 70, color: THEME.mutedText, fontSize: 12 }}>{time}</div>
+        <div style={style}>{entry.text}</div>
       </div>
     );
   };
 
+  // small UI helpers
+  const statusLabel = () => {
+    switch (status) {
+      case 'idle': return 'OFF';
+      case 'requesting': return 'Meminta izin';
+      case 'active': return 'ON';
+      case 'detecting': return 'Mendeteksi wajah';
+      case 'processing': return 'Memproses';
+      case 'success': return 'Berhasil';
+      case 'error': return 'Error';
+      default: return status;
+    }
+  };
+
   return (
-    <div className="min-h-screen p-6 bg-[#071025] text-zinc-100 font-sans">
-      <div className="max-w-6xl mx-auto">
-        <header className="flex items-center justify-between mb-6">
+    <div style={{ minHeight: '100vh', background: THEME.background, color: '#e6eefc', padding: 24, fontFamily: 'Inter, system-ui, -apple-system, Roboto, "Segoe UI", sans-serif' }}>
+      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+        {/* header */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
           <div>
-            <h1 className="text-2xl font-semibold">Kamera & Face Analyzer (Themed)</h1>
-            <p className="text-sm text-zinc-400">Demo dengan tampilan card dan log bergaya sistem.</p>
+            <div style={{ fontSize: 22, fontWeight: 700 }}>Kamera & Face Analyzer</div>
+            <div style={{ color: THEME.mutedText, fontSize: 13, marginTop: 4 }}>Tema: deep navy • aksen cyan / green / purple</div>
           </div>
-          <div className="flex items-center gap-3">
-            {/* Status badge */}
-            <div className="text-sm px-3 py-2 rounded-xl bg-zinc-800/40 border border-zinc-700">
-              <div className="flex items-center gap-3">
-                <div className={`h-3 w-3 rounded-full ${status === 'active' || status === 'detecting' || status === 'processing' ? 'bg-amber-400' : status === 'success' ? 'bg-green-400' : status === 'error' ? 'bg-red-500' : 'bg-zinc-500'}`} />
-                <div className="font-medium">{status.toUpperCase()}</div>
-              </div>
+
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <div style={{ padding: '8px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.02)', border: `1px solid ${THEME.cardBorder}`, display: 'flex', gap: 10, alignItems: 'center' }}>
+              <div style={{
+                height: 10,
+                width: 10,
+                borderRadius: 999,
+                background: (status === 'active' || status === 'detecting' || status === 'processing') ? '#f5a623' : (status === 'success' ? THEME.accentGreen : (status === 'error' ? THEME.accentPurple : '#314156'))
+              }} />
+              <div style={{ fontWeight: 600, fontSize: 13 }}>{status.toUpperCase()}</div>
             </div>
 
-            {/* Duration / runtime */}
-            <div className="text-sm text-zinc-400 px-3 py-2 rounded-xl bg-zinc-800/20 border border-zinc-700">
-              Durasi: <span className="font-medium text-zinc-100 ml-2">{renderDuration()}</span>
+            <div style={{ padding: '8px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.02)', border: `1px solid ${THEME.cardBorder}`, fontSize: 13, color: THEME.mutedText }}>
+              Durasi: <span style={{ marginLeft: 8, color: '#fff', fontWeight: 600 }}>{renderDuration()}</span>
             </div>
 
-            {/* Start button area (kept like original logic) */}
             <div>
               {showStartButton && (
                 <button
                   onClick={startAndCaptureFlow}
                   disabled={sending}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-2xl bg-gradient-to-r from-sky-500 to-indigo-500 hover:from-sky-600 disabled:opacity-60 shadow-lg"
+                  style={{
+                    background: `linear-gradient(90deg, ${THEME.accentCyan} 0%, ${THEME.accentPurple} 100%)`,
+                    color: '#081026',
+                    border: 'none',
+                    padding: '8px 14px',
+                    borderRadius: 999,
+                    fontWeight: 600,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.4)'
+                  }}
                 >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="white">
-                    <path d="M6.5 5.5v9l7-4.5-7-4.5z" />
-                  </svg>
-                  <span className="text-sm font-medium">{sending ? 'Mengirim...' : 'Mulai'}</span>
+                  {sending ? 'Mengirim...' : 'Mulai'}
                 </button>
               )}
             </div>
           </div>
-        </header>
+        </div>
 
-        {/* Responsive layout: mobile stack, desktop grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Left: preview card spans 2 cols on desktop */}
-          <div className="lg:col-span-2">
-            <div className="bg-gradient-to-br from-[#0b1220] to-[#081226] rounded-2xl p-4 shadow-2xl border border-zinc-800">
-              {/* Video card */}
-              <div className="relative rounded-lg overflow-hidden bg-black">
-                <video ref={videoRef} playsInline muted autoPlay className="w-full h-[360px] object-cover bg-black" />
+        {/* main layout (responsive) */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 16 }}>
+          {/* use CSS media query inline via style attribute isn't straightforward; adopt simple responsive layout via wrapping */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* preview card */}
+            <div style={{
+              borderRadius: 14,
+              padding: 14,
+              background: `linear-gradient(180deg, rgba(8,12,22,0.95), rgba(6,10,18,0.92))`,
+              border: `1px solid ${THEME.cardBorder}`,
+              boxShadow: '0 10px 30px rgba(2,8,20,0.6)'
+            }}>
+              <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', background: '#000', border: `1px solid rgba(255,255,255,0.02)` }}>
+                <video
+                  ref={videoRef}
+                  playsInline
+                  muted
+                  autoPlay
+                  style={{ width: '100%', height: 360, objectFit: 'cover', background: '#000' }}
+                />
 
-                {/* card overlay */}
-                <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between gap-4">
-                  <div className="bg-zinc-900/60 backdrop-blur-sm p-3 rounded-xl border border-zinc-700 flex items-center gap-4">
-                    <div className={`h-3 w-3 rounded-full ${status === 'active' || status === 'detecting' || status === 'processing' ? 'bg-amber-400' : status === 'success' ? 'bg-green-400' : status === 'error' ? 'bg-red-500' : 'bg-zinc-500'}`} />
+                {/* overlay status card */}
+                <div style={{ position: 'absolute', left: 12, top: 12, background: 'rgba(8,12,20,0.6)', padding: 8, borderRadius: 10, border: `1px solid rgba(255,255,255,0.03)`, color: THEME.mutedText }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#dbeafe' }}>Preview Kamera</div>
+                </div>
+
+                <div style={{ position: 'absolute', left: 12, bottom: 12, right: 12, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 10, borderRadius: 12, background: 'rgba(5,9,16,0.6)', backdropFilter: 'blur(6px)', border: `1px solid rgba(255,255,255,0.02)` }}>
+                    <div style={{
+                      width: 12,
+                      height: 12,
+                      borderRadius: 6,
+                      background: (status === 'active' || status === 'detecting' || status === 'processing') ? '#f5a623' : (status === 'success' ? THEME.accentGreen : (status === 'error' ? THEME.accentPurple : '#2f3d49'))
+                    }} />
                     <div>
-                      <div className="text-xs text-zinc-300">Status</div>
-                      <div className="text-sm font-medium">{status === 'idle' ? 'OFF' : status === 'requesting' ? 'Meminta izin' : status === 'active' ? 'ON' : status === 'detecting' ? 'Mendeteksi wajah' : status === 'processing' ? 'Memproses' : status === 'success' ? 'Berhasil' : 'Error'}</div>
+                      <div style={{ fontSize: 11, color: THEME.mutedText }}>Status</div>
+                      <div style={{ fontSize: 14, color: '#e6eefc', fontWeight: 700 }}>{statusLabel()}</div>
                     </div>
                   </div>
 
-                  <div className="bg-zinc-900/60 backdrop-blur-sm p-3 rounded-xl border border-zinc-700 text-right">
-                    <div className="text-xs text-zinc-300">Waktu aktif</div>
-                    <div className="text-sm font-medium">{renderDuration()}</div>
+                  <div style={{ padding: 10, borderRadius: 12, background: 'rgba(5,9,16,0.6)', border: `1px solid rgba(255,255,255,0.02)`, textAlign: 'right' }}>
+                    <div style={{ fontSize: 11, color: THEME.mutedText }}>Waktu aktif</div>
+                    <div style={{ fontSize: 14, color: '#e6eefc', fontWeight: 700 }}>{renderDuration()}</div>
                   </div>
-                </div>
-
-                {/* top-left small badge */}
-                <div className="absolute top-4 left-4 bg-zinc-900/60 p-2 rounded-lg border border-zinc-700 text-xs">
-                  <div className="font-medium">Preview Kamera</div>
                 </div>
               </div>
 
-              {/* below: system info card */}
-              <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="col-span-1 md:col-span-2 bg-zinc-900/30 p-4 rounded-xl border border-zinc-800">
-                  <div className="text-sm text-zinc-300">System Info</div>
-                  <div className="mt-2 text-xs text-zinc-200">Izin Kamera: <span className="font-medium">{permissionGranted ? 'Diberikan' : status === 'error' ? 'Error / Ditolak' : 'Belum'}</span></div>
-                  <div className="mt-1 text-xs text-zinc-200">Status: <span className="font-medium">{status}</span></div>
-                  <div className="mt-1 text-xs text-zinc-200">Percobaan terakhir: <span className="font-medium">{infoLog.length ? infoLog[0].ts.toLocaleString('id-ID') : '--'}</span></div>
+              {/* system info + control row */}
+              <div style={{ marginTop: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                <div style={{ flex: 1, minWidth: 240, background: THEME.card, borderRadius: 12, padding: 12, border: `1px solid ${THEME.cardBorder}` }}>
+                  <div style={{ fontSize: 13, color: THEME.mutedText }}>System Info</div>
+                  <div style={{ marginTop: 8, fontSize: 13, color: '#dbeafe' }}>
+                    <div><strong>Izin Kamera:</strong> <span style={{ color: '#fff', marginLeft: 6 }}>{permissionGranted ? 'Diberikan' : (status === 'error' ? 'Error / Ditolak' : 'Belum')}</span></div>
+                    <div style={{ marginTop: 6 }}><strong>Status:</strong> <span style={{ marginLeft: 6 }}>{status}</span></div>
+                    <div style={{ marginTop: 6 }}><strong>Percobaan:</strong> <span style={{ marginLeft: 6 }}>{infoLog.length ? infoLog[0].ts.toLocaleString('id-ID') : '--'}</span></div>
+                  </div>
                 </div>
 
-                <div className="col-span-1 bg-zinc-900/20 p-4 rounded-xl border border-zinc-800">
-                  <div className="text-sm text-zinc-300">Kontrol</div>
-                  <div className="mt-3 flex gap-2">
-                    <button onClick={resetAll} className="px-3 py-2 rounded-lg bg-zinc-800/60 hover:bg-zinc-700">Reset</button>
-                    <button onClick={() => { setInfoLog([]); pushLog('Log dibersihkan oleh pengguna.', 'warn'); }} className="px-3 py-2 rounded-lg bg-zinc-800/60 hover:bg-zinc-700">Bersihkan Log</button>
+                <div style={{ width: 220, background: THEME.card, borderRadius: 12, padding: 12, border: `1px solid ${THEME.cardBorder}` }}>
+                  <div style={{ fontSize: 13, color: THEME.mutedText }}>Kontrol</div>
+                  <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
+                    <button onClick={resetAll} style={{ flex: 1, padding: '8px 10px', borderRadius: 8, background: 'transparent', border: `1px solid ${THEME.cardBorder}`, color: '#dbeafe', cursor: 'pointer' }}>Reset</button>
+                    <button onClick={() => { setInfoLog([]); pushLog('Log dibersihkan oleh pengguna.', 'warn'); }} style={{ padding: '8px 10px', borderRadius: 8, background: 'transparent', border: `1px solid ${THEME.cardBorder}`, color: '#dbeafe', cursor: 'pointer' }}>Bersihkan</button>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* Right: Log card (mobile: below preview) */}
-          <div>
-            <div className="bg-gradient-to-br from-[#071025] to-[#061021] rounded-2xl p-4 shadow-xl border border-zinc-800 h-full flex flex-col">
-              <div className="flex items-center justify-between mb-3">
+            {/* log card (mobile: below preview) */}
+            <div style={{
+              borderRadius: 14,
+              padding: 14,
+              background: THEME.card,
+              border: `1px solid ${THEME.cardBorder}`,
+              boxShadow: '0 8px 20px rgba(2,8,20,0.6)'
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                 <div>
-                  <div className="text-sm text-zinc-300">Log Aktivitas</div>
-                  <div className="text-xs text-zinc-500">Terurut terbaru di atas — warna mencerminkan level</div>
+                  <div style={{ color: THEME.mutedText, fontSize: 13 }}>Log Aktivitas</div>
+                  <div style={{ color: '#a6b8d9', fontSize: 12 }}>Terurut terbaru di atas — warna menunjukkan level</div>
                 </div>
-                <div className="text-xs text-zinc-400">Total: <span className="font-medium">{infoLog.length}</span></div>
+                <div style={{ color: THEME.mutedText, fontSize: 13 }}>Total: <span style={{ color: '#e6eefc', fontWeight: 700 }}>{infoLog.length}</span></div>
               </div>
 
-              <div className="flex-1 overflow-auto bg-zinc-900/30 p-3 rounded-lg border border-zinc-800">
+              <div style={{ background: THEME.logBg, padding: 12, borderRadius: 10, border: `1px solid rgba(255,255,255,0.02)`, maxHeight: 280, overflow: 'auto' }}>
                 {infoLog.length === 0 ? (
-                  <div className="text-zinc-400">-- belum ada aktivitas --</div>
+                  <div style={{ color: THEME.mutedText }}>-- belum ada aktivitas --</div>
                 ) : (
-                  <div className="flex flex-col gap-3">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     {infoLog.map((l, i) => renderLogLine(l, i))}
                   </div>
                 )}
               </div>
 
-              {/* small footer note */}
-              <div className="mt-3 text-xs text-zinc-500">Tip: Tekan "Mulai" untuk meminta izin kamera. Jika ditolak, status akan berubah ke Error.</div>
+              <div style={{ marginTop: 10, color: THEME.mutedText, fontSize: 12 }}>Tip: Tekan "Mulai" untuk meminta izin kamera. Jika ditolak, status akan berubah menjadi Error.</div>
             </div>
           </div>
+
+          {/* desktop layout: small right column with log + preview side-by-side mimic */}
+          <style>{`
+            @media (min-width: 992px) {
+              .themed-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+              .desktop-only-hide { display: none; }
+            }
+            @media (max-width: 991px) {
+              .themed-grid { display: block; }
+              .desktop-only-hide { display: block; }
+            }
+          `}</style>
+
+          <div className="desktop-only-hide" style={{ display: 'none' }} />
         </div>
 
+        {/* invisible canvas for captures */}
         <canvas ref={canvasRef} style={{ display: 'none' }} />
       </div>
     </div>
