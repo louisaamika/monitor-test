@@ -1,51 +1,48 @@
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from "react";
 
-// Face Analyzer - Themed to match provided dashboard colors (deep navy + cyan/green/purple accents).
-// Single-file React component. No external panel/editor required.
-// Keep original mechanics (start → ask permission → start view / logs / hide button; handle denied permission).
-//
-// Notes:
-// - You can drop this file into a React app. It uses inline styles + utility classes; Tailwind classnames are left
-//   for convenience but styling is mainly controlled via the color variables below so it also works with plain CSS setups.
+/**
+ * Upgraded FaceAnalyzerSingleView
+ * - Keeps your original logic & flow intact
+ * - Adds a dark "system monitor" theme inspired by your screenshot:
+ *   • Card-style preview with overlay status & duration
+ *   • Clean start button layout (keeps existing mechanics)
+ *   • System info card (camera & attempt info)
+ *   • Styled single-line log entries with colorized severity
+ *   • Responsive layout: mobile stacked (preview -> log), desktop side-by-side
+ *
+ * Notes:
+ * - I intentionally preserved your function names & flow (startAndCaptureFlow, captureBlobFromVideo, etc.)
+ * - Only UI/UX and a few small state fields were added to enable the appearance and status info.
+ * - No external CSS files required — styles included via a CSS block inside component.
+ */
 
 const API_ENDPOINT = {
-  url: 'https://demo.api4ai.cloud/face-analyzer/v1/results',
+  url: "https://demo.api4ai.cloud/face-analyzer/v1/results",
   headers: {}
 };
 
 export default function FaceAnalyzerSingleView() {
-  // refs
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const streamRef = useRef(null);
-  const abortRef = useRef(false);
-
-  // state
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [sending, setSending] = useState(false);
-  const [infoLog, setInfoLog] = useState([]); // entries: { ts, text, level }
+  const [infoLog, setInfoLog] = useState([]);
   const [showStartButton, setShowStartButton] = useState(true);
-  const [status, setStatus] = useState('idle'); // idle, requesting, active, detecting, processing, success, error
-  const [startAt, setStartAt] = useState(null);
-  const [detectedAt, setDetectedAt] = useState(null);
+  const abortRef = useRef(false);
 
-  // theme colours (match screenshot feel)
-  const THEME = {
-    background: '#081026', // deep navy
-    card: '#0b1220', // card dark
-    cardBorder: 'rgba(255,255,255,0.03)',
-    accentCyan: '#57d7ff',
-    accentGreen: '#39e07a',
-    accentPurple: '#b77bff',
-    mutedText: 'rgba(220,230,255,0.55)',
-    logBg: 'rgba(6,12,22,0.6)'
-  };
+  // New UI states
+  const [status, setStatus] = useState("idle"); // idle | requesting | active | detecting | processing | error | success
+  const [attempts, setAttempts] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const elapsedStartRef = useRef(null);
+  const elapsedTimerRef = useRef(null);
 
-  const pushLog = (text, level = 'info') => {
-    const entry = { ts: new Date(), text, level };
-    setInfoLog((p) => [entry, ...p].slice(0, 300));
-    // keep console debug
-    console.log(`${entry.ts.toLocaleString('id-ID')} — [${level}] ${text}`);
+  const pushLog = (text) => {
+    // Keep logs single-line and concise; we add a severity tag for coloring later
+    const entry = `${new Date().toLocaleString("id-ID")} — ${text}`.replace(/\n/g, " ");
+    setInfoLog((p) => [entry, ...p].slice(0, 200)); // cap to 200 entries
+    console.log(entry);
   };
 
   const resetAll = () => {
@@ -58,19 +55,37 @@ export default function FaceAnalyzerSingleView() {
     setShowStartButton(true);
     setSending(false);
     abortRef.current = true;
-    setStatus('idle');
-    setStartAt(null);
-    setDetectedAt(null);
-    pushLog('Kembali ke kondisi awal.', 'warn');
+    setStatus("idle");
+    setAttempts(0);
+    stopElapsedTimer();
+    pushLog("Kembali ke kondisi awal.");
+  };
+
+  const startElapsedTimer = () => {
+    elapsedStartRef.current = Date.now();
+    setElapsedMs(0);
+    stopElapsedTimer();
+    elapsedTimerRef.current = setInterval(() => {
+      setElapsedMs(Date.now() - (elapsedStartRef.current || Date.now()));
+    }, 250);
+  };
+
+  const stopElapsedTimer = () => {
+    if (elapsedTimerRef.current) {
+      clearInterval(elapsedTimerRef.current);
+      elapsedTimerRef.current = null;
+    }
   };
 
   const startAndCaptureFlow = async () => {
     abortRef.current = false;
-    setStatus('requesting');
-    pushLog('Meminta izin kamera...', 'info');
+    setAttempts(0);
+    setStatus("requesting");
+    pushLog("Meminta izin kamera...");
 
     try {
-      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+      const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+
       if (abortRef.current) {
         s.getTracks().forEach((t) => t.stop());
         return;
@@ -79,9 +94,9 @@ export default function FaceAnalyzerSingleView() {
       streamRef.current = s;
       setPermissionGranted(true);
       setShowStartButton(false);
-      setStatus('active');
-      setStartAt(new Date());
-      pushLog('Izin diberikan. Kamera aktif.', 'success');
+      setStatus("active");
+      startElapsedTimer();
+      pushLog("Kamera aktif. Menunggu frame untuk menangkap foto...");
 
       if (videoRef.current) {
         videoRef.current.srcObject = s;
@@ -89,73 +104,78 @@ export default function FaceAnalyzerSingleView() {
         if (playPromise && playPromise.catch) playPromise.catch(() => {});
       }
 
-      // wait for a stabilized frame
+      // Wait for a frame to be ready
       await new Promise((res) => {
         const video = videoRef.current;
         if (!video) return res();
         if (video.readyState >= 2) return res();
         const onLoaded = () => {
-          video.removeEventListener('loadeddata', onLoaded);
+          video.removeEventListener("loadeddata", onLoaded);
           res();
         };
-        video.addEventListener('loadeddata', onLoaded);
-        setTimeout(res, 800);
+        video.addEventListener("loadeddata", onLoaded);
+        setTimeout(res, 800); // fallback
       });
 
-      // capture loop
+      // start capture loop until valid face detected or aborted
       let attempt = 0;
-      const maxAttempts = 12;
+      const maxAttempts = 12; // safety to avoid infinite loop
 
       while (!abortRef.current) {
         attempt += 1;
-        setStatus('detecting');
-        pushLog(`Mengambil foto (percobaan ${attempt})...`, 'info');
+        setAttempts(attempt);
+        setStatus("detecting");
+        pushLog(`Mengambil foto (percobaan ${attempt})...`);
+
         const capturedBlob = await captureBlobFromVideo();
         if (!capturedBlob) {
-          pushLog('Gagal membuat blob dari video.', 'error');
+          pushLog("Gagal membuat blob dari video.");
+          setStatus("error");
           break;
         }
 
         setSending(true);
-        setStatus('processing');
-        pushLog('Mengirim foto ke API...', 'info');
+        setStatus("processing");
+        pushLog("Mengirim foto ke API...");
 
         try {
           const fd = new FormData();
-          fd.append('image', capturedBlob, 'face.jpg');
+          fd.append("image", capturedBlob, "face.jpg");
 
           const res = await fetch(API_ENDPOINT.url, {
-            method: 'POST',
+            method: "POST",
             headers: API_ENDPOINT.headers,
             body: fd
           });
 
-          const contentType = res.headers.get('content-type') || '';
+          const contentType = res.headers.get("content-type") || "";
           let result;
-          if (contentType.includes('application/json')) result = await res.json();
+          if (contentType.includes("application/json")) result = await res.json();
           else result = await res.text();
 
-          pushLog(`Status API: ${res.status}`, 'info');
+          pushLog(`Status API: ${res.status}`);
+          pushLog(`Response: ${typeof result === "string" ? result : JSON.stringify(result)}`);
 
           const valid = checkFaceValid(result);
           if (valid) {
-            pushLog('Wajah terdeteksi valid. Proses selesai.', 'success');
-            setDetectedAt(new Date());
-            setStatus('success');
+            pushLog("Wajah terdeteksi valid. Proses selesai.");
+            setStatus("success");
             cleanupAfterSuccess();
             break;
           } else {
-            pushLog('Wajah tidak valid atau tidak terdeteksi. Mencoba ulang...', 'warn');
+            pushLog("Wajah tidak valid/tdk terdeteksi. Mencoba ulang...");
+            setStatus("detecting");
             if (attempt >= maxAttempts) {
-              pushLog(`Mencapai batas percobaan (${maxAttempts}). Menghentikan proses.`, 'error');
+              pushLog(`Mencapai batas percobaan (${maxAttempts}). Menghentikan proses.`);
+              setStatus("error");
               resetAll();
               break;
             }
             await new Promise((r) => setTimeout(r, 700));
           }
         } catch (err) {
-          pushLog('Error kirim API: ' + (err.message || err), 'error');
-          setStatus('error');
+          pushLog("Error kirim API: " + (err?.message || String(err)));
+          setStatus("error");
           resetAll();
           break;
         } finally {
@@ -163,8 +183,8 @@ export default function FaceAnalyzerSingleView() {
         }
       }
     } catch (err) {
-      pushLog('Izin kamera ditolak atau error: ' + (err.message || err), 'error');
-      setStatus('error');
+      pushLog("Izin kamera ditolak atau error: " + (err?.message || String(err)));
+      setStatus("error");
       resetAll();
     }
   };
@@ -177,9 +197,9 @@ export default function FaceAnalyzerSingleView() {
 
       canvas.width = video.videoWidth || 640;
       canvas.height = video.videoHeight || 480;
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext("2d");
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.9);
+      canvas.toBlob((b) => resolve(b), "image/jpeg", 0.9);
     });
   };
 
@@ -191,15 +211,18 @@ export default function FaceAnalyzerSingleView() {
         for (const out of result.outputs) {
           if (out.entities && Array.isArray(out.entities)) {
             for (const ent of out.entities) {
-              if (ent.type && ent.type.includes('face')) return true;
+              if (ent.type && ent.type.includes("face")) return true;
               if (ent.faces && Array.isArray(ent.faces) && ent.faces.length > 0) return true;
             }
           }
         }
       }
-      const maybeFaces = result?.outputs?.[0]?.faces || result?.outputs?.[0]?.entities?.[0]?.faces;
+      const maybeFaces =
+        result?.outputs?.[0]?.faces || result?.outputs?.[0]?.entities?.[0]?.faces;
       if (Array.isArray(maybeFaces) && maybeFaces.length > 0) return true;
-    } catch (e) {}
+    } catch (e) {
+      // ignore parsing errors
+    }
     return false;
   };
 
@@ -210,227 +233,366 @@ export default function FaceAnalyzerSingleView() {
     }
     if (videoRef.current) videoRef.current.srcObject = null;
     setPermissionGranted(false);
-    // keep button hidden per request
-    setShowStartButton(false);
+    setShowStartButton(false); // keep hidden per request
     abortRef.current = true;
+    stopElapsedTimer();
   };
 
   useEffect(() => {
     return () => {
       abortRef.current = true;
       if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
+      stopElapsedTimer();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const renderDuration = () => {
-    if (!startAt) return '--';
-    const end = detectedAt || new Date();
-    const ms = Math.max(0, end - startAt);
-    const s = Math.floor(ms / 1000) % 60;
-    const m = Math.floor(ms / 60000) % 60;
-    const h = Math.floor(ms / 3600000);
-    return `${h}h ${m}m ${s}s`;
+  // small helper to format elapsed as MM:SS
+  const formatElapsed = (ms) => {
+    if (!ms) return "00:00";
+    const s = Math.floor(ms / 1000);
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
   };
 
-  const renderLogLine = (entry, idx) => {
-    const time = entry.ts.toLocaleTimeString('id-ID');
-    const color = entry.level === 'error'
-      ? THEME.accentPurple // use purple for errors to match screenshot purple emphasis
-      : entry.level === 'warn'
-        ? THEME.accentGreen
-        : entry.level === 'success'
-          ? THEME.accentGreen
-          : THEME.accentCyan;
+  // pick badge color for status
+  const statusColor = {
+    idle: "#6b7280",
+    requesting: "#f59e0b",
+    active: "#10b981",
+    detecting: "#06b6d4",
+    processing: "#7c3aed",
+    error: "#ef4444",
+    success: "#22c55e"
+  }[status || "idle"];
 
-    const style = {
-      color,
-      whiteSpace: 'pre-wrap'
-    };
-
-    return (
-      <div key={idx} style={{ display: 'flex', gap: 12, alignItems: 'flex-start', fontSize: 13, lineHeight: 1.25 }}>
-        <div style={{ width: 70, color: THEME.mutedText, fontSize: 12 }}>{time}</div>
-        <div style={style}>{entry.text}</div>
-      </div>
-    );
+  // classify log severity by keywords for coloring
+  const classifyLog = (text) => {
+    const t = text.toLowerCase();
+    if (t.includes("error") || t.includes("gagal") || t.includes("ditolak") || t.includes("henti"))
+      return "error";
+    if (t.includes("berhasil") || t.includes("terdeteksi") || t.includes("sukses")) return "success";
+    if (t.includes("mengirim") || t.includes("meminta") || t.includes("mencoba")) return "processing";
+    return "info";
   };
 
-  // small UI helpers
-  const statusLabel = () => {
-    switch (status) {
-      case 'idle': return 'OFF';
-      case 'requesting': return 'Meminta izin';
-      case 'active': return 'ON';
-      case 'detecting': return 'Mendeteksi wajah';
-      case 'processing': return 'Memproses';
-      case 'success': return 'Berhasil';
-      case 'error': return 'Error';
-      default: return status;
-    }
-  };
+  // Responsive layout break: use CSS below
 
   return (
-    <div style={{ minHeight: '100vh', background: THEME.background, color: '#e6eefc', padding: 24, fontFamily: 'Inter, system-ui, -apple-system, Roboto, "Segoe UI", sans-serif' }}>
-      <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-        {/* header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
-          <div>
-            <div style={{ fontSize: 22, fontWeight: 700 }}>Kamera & Face Analyzer</div>
-            <div style={{ color: THEME.mutedText, fontSize: 13, marginTop: 4 }}>Tema: deep navy • aksen cyan / green / purple</div>
-          </div>
+    <div className="fa-root">
+      <style>{`
+        .fa-root {
+          font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+          color: #e6eef8;
+          background: linear-gradient(180deg, #071022 0%, #071423 100%);
+          min-height: 100vh;
+          padding: 28px;
+        }
 
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-            <div style={{ padding: '8px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.02)', border: `1px solid ${THEME.cardBorder}`, display: 'flex', gap: 10, alignItems: 'center' }}>
-              <div style={{
-                height: 10,
-                width: 10,
-                borderRadius: 999,
-                background: (status === 'active' || status === 'detecting' || status === 'processing') ? '#f5a623' : (status === 'success' ? THEME.accentGreen : (status === 'error' ? THEME.accentPurple : '#314156'))
-              }} />
-              <div style={{ fontWeight: 600, fontSize: 13 }}>{status.toUpperCase()}</div>
+        .fa-container {
+          max-width: 1100px;
+          margin: 0 auto;
+        }
+
+        .fa-title {
+          display:flex;
+          justify-content:space-between;
+          align-items:center;
+          margin-bottom:16px;
+        }
+        .fa-title h1 {
+          font-size:20px;
+          margin:0;
+          color:#f8fafc;
+        }
+        .fa-latency {
+          color:#a78bfa;
+          font-weight:600;
+        }
+
+        .fa-grid {
+          display:flex;
+          gap:18px;
+          align-items:flex-start;
+          flex-wrap:wrap;
+        }
+
+        /* left column: preview */
+        .fa-preview-card {
+          background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+          border-radius:12px;
+          padding:12px;
+          width:100%;
+          box-shadow: 0 6px 18px rgba(3,7,18,0.6);
+          border: 1px solid rgba(255,255,255,0.03);
+        }
+
+        @media(min-width:900px) {
+          .fa-preview-card { width: 640px; }
+        }
+
+        .fa-preview-inner {
+          position:relative;
+          border-radius:10px;
+          overflow:hidden;
+          background:#000;
+        }
+
+        .fa-video {
+          display:block;
+          width:100%;
+          height:360px;
+          object-fit:cover;
+          background:#000;
+        }
+
+        .fa-overlay {
+          position:absolute;
+          left:12px;
+          top:12px;
+          background: rgba(7,11,22,0.6);
+          backdrop-filter: blur(6px);
+          padding:8px 10px;
+          border-radius:8px;
+          border: 1px solid rgba(255,255,255,0.03);
+          display:flex;
+          gap:12px;
+          align-items:center;
+        }
+
+        .fa-badge {
+          display:inline-flex;
+          gap:8px;
+          align-items:center;
+          font-size:13px;
+        }
+
+        .fa-status-dot {
+          width:10px;
+          height:10px;
+          border-radius:999px;
+          display:inline-block;
+          box-shadow: 0 0 10px rgba(0,0,0,0.6);
+        }
+
+        .fa-small {
+          font-size:12px;
+          color:#cbd5e1;
+        }
+
+        .fa-controls {
+          margin-top:12px;
+          display:flex;
+          gap:12px;
+          align-items:center;
+          justify-content:space-between;
+        }
+
+        .fa-start-btn {
+          background: linear-gradient(90deg,#6366f1,#8b5cf6);
+          color:white;
+          border:none;
+          padding:10px 18px;
+          border-radius:10px;
+          cursor:pointer;
+          font-weight:600;
+          box-shadow: 0 6px 18px rgba(99,102,241,0.12);
+        }
+
+        .fa-start-btn[disabled] {
+          opacity:0.6;
+          cursor:not-allowed;
+        }
+
+        .fa-system-info {
+          background: linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.005));
+          border-radius:12px;
+          padding:12px;
+          width:100%;
+          border: 1px solid rgba(255,255,255,0.02);
+          margin-top:12px;
+          color:#cfe7ff;
+          font-size:13px;
+        }
+
+        /* right column: log */
+        .fa-log-card {
+          flex:1;
+          min-width:280px;
+          border-radius:12px;
+          padding:12px;
+          background: linear-gradient(180deg, rgba(3,7,18,0.5), rgba(3,7,18,0.35));
+          border: 1px solid rgba(255,255,255,0.02);
+          box-shadow: 0 6px 18px rgba(2,6,14,0.6);
+        }
+
+        .fa-log-title {
+          font-weight:700;
+          color:#cbd5e1;
+          margin-bottom:8px;
+        }
+
+        .fa-log-list {
+          max-height:420px;
+          overflow:auto;
+          background: linear-gradient(180deg, rgba(2,6,23,0.6), rgba(2,6,23,0.45));
+          padding:12px;
+          border-radius:8px;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+          font-size:13px;
+          color:#dbeafe;
+          border: 1px solid rgba(255,255,255,0.015);
+        }
+
+        .fa-log-item { margin-bottom:10px; line-height:1.22; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+        .fa-log-item.info { color:#cfe7ff; }
+        .fa-log-item.processing { color:#fcd34d; }
+        .fa-log-item.success { color:#86efac; }
+        .fa-log-item.error { color:#fca5a5; }
+
+        .fa-meta-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px; }
+
+        /* layout: mobile stacked, desktop 2-col */
+        @media(min-width:900px) {
+          .fa-grid { align-items:flex-start; }
+          .fa-preview-card { flex-shrink:0; }
+          .fa-log-card { width: 420px; }
+        }
+      `}</style>
+
+      <div className="fa-container">
+        <div className="fa-title">
+          <h1>System Monitor · Face Analyzer (Demo)</h1>
+          <div className="fa-latency">Demo UI theme</div>
+        </div>
+
+        <div className="fa-grid">
+          {/* PREVIEW + SYSTEM INFO */}
+          <div className="fa-preview-card">
+            <div className="fa-preview-inner">
+              <video
+                ref={videoRef}
+                className="fa-video"
+                playsInline
+                muted
+                autoPlay
+                style={{ background: "#000", objectFit: "cover" }}
+              />
+
+              {/* overlay: status + elapsed */}
+              <div className="fa-overlay" style={{ borderColor: "rgba(255,255,255,0.03)" }}>
+                <div className="fa-badge">
+                  <span
+                    className="fa-status-dot"
+                    style={{ background: statusColor, boxShadow: `0 6px 18px ${statusColor}33` }}
+                    aria-hidden
+                  />
+                  <div style={{ display: "flex", flexDirection: "column" }}>
+                    <div style={{ fontWeight: 700, color: "#e6f0ff", fontSize: 13 }}>
+                      {status === "idle" && "Idle"}
+                      {status === "requesting" && "Meminta izin"}
+                      {status === "active" && "Kamera aktif"}
+                      {status === "detecting" && "Mendeteksi wajah"}
+                      {status === "processing" && "Memproses"}
+                      {status === "error" && "Error"}
+                      {status === "success" && "Berhasil"}
+                    </div>
+                    <div className="fa-small">Durasi: {formatElapsed(elapsedMs)}</div>
+                  </div>
+                </div>
+              </div>
             </div>
 
-            <div style={{ padding: '8px 12px', borderRadius: 12, background: 'rgba(255,255,255,0.02)', border: `1px solid ${THEME.cardBorder}`, fontSize: 13, color: THEME.mutedText }}>
-              Durasi: <span style={{ marginLeft: 8, color: '#fff', fontWeight: 600 }}>{renderDuration()}</span>
-            </div>
+            <div className="fa-controls">
+              <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                {showStartButton && (
+                  <button
+                    onClick={startAndCaptureFlow}
+                    disabled={sending || status === "requesting"}
+                    className="fa-start-btn"
+                  >
+                    {sending ? "Mengirim..." : "Mulai"}
+                  </button>
+                )}
 
-            <div>
-              {showStartButton && (
-                <button
-                  onClick={startAndCaptureFlow}
-                  disabled={sending}
+                {/* small status text */}
+                <div style={{ display: "flex", flexDirection: "column" }}>
+                  <div style={{ fontSize: 13, color: "#cfe7ff", fontWeight: 600 }}>
+                    Permission:{" "}
+                    <span style={{ color: permissionGranted ? "#86efac" : "#fca5a5", fontWeight: 700 }}>
+                      {permissionGranted ? "Granted" : "Not granted"}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: "#9fb7d9" }}>Attempts: {attempts}</div>
+                </div>
+              </div>
+
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div className="fa-small">Status:</div>
+                <div
                   style={{
-                    background: `linear-gradient(90deg, ${THEME.accentCyan} 0%, ${THEME.accentPurple} 100%)`,
-                    color: '#081026',
-                    border: 'none',
-                    padding: '8px 14px',
+                    background: statusColor,
+                    color: "#041018",
+                    padding: "6px 10px",
                     borderRadius: 999,
-                    fontWeight: 600,
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.4)'
+                    fontWeight: 700,
+                    fontSize: 13
                   }}
                 >
-                  {sending ? 'Mengirim...' : 'Mulai'}
-                </button>
+                  {status.toUpperCase()}
+                </div>
+              </div>
+            </div>
+
+            {/* system info card */}
+            <div className="fa-system-info" aria-hidden={false}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: "#e6f0ff" }}>System Info</div>
+                  <div style={{ marginTop: 8, color: "#bcd7f5" }}>
+                    <div>Camera: {streamRef.current ? (streamRef.current.getVideoTracks()[0]?.label || "User Camera") : "—"}</div>
+                    <div>Resolution: {videoRef.current?.videoWidth ? `${videoRef.current.videoWidth}×${videoRef.current.videoHeight}` : "—"}</div>
+                    <div>Runtime: {formatElapsed(elapsedMs)}</div>
+                  </div>
+                </div>
+
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 12, color: "#9fb7d9" }}>Mode</div>
+                  <div style={{ marginTop: 6, fontWeight: 700 }}>{sending ? "Sending" : "Idle"}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* LOG card */}
+          <div className="fa-log-card">
+            <div className="fa-log-title">Log Aktivitas</div>
+
+            <div className="fa-log-list" role="log" aria-live="polite">
+              {infoLog.length === 0 ? (
+                <div style={{ opacity: 0.6 }}>-- belum ada aktivitas --</div>
+              ) : (
+                infoLog.map((l, i) => {
+                  const cls = classifyLog(l);
+                  return (
+                    <div key={i} className={`fa-log-item ${cls}`} title={l}>
+                      {l}
+                    </div>
+                  );
+                })
               )}
             </div>
+
+            <div className="fa-meta-row" style={{ marginTop: 12 }}>
+              <div style={{ fontSize: 12, color: "#9fb7d9" }}>Hints:</div>
+              <div style={{ fontSize: 12, color: "#cfe7ff" }}>Logs are single-line, color-coded: errors (red), processing (yellow), success (green).</div>
+            </div>
           </div>
         </div>
 
-        {/* main layout (responsive) */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 16 }}>
-          {/* use CSS media query inline via style attribute isn't straightforward; adopt simple responsive layout via wrapping */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            {/* preview card */}
-            <div style={{
-              borderRadius: 14,
-              padding: 14,
-              background: `linear-gradient(180deg, rgba(8,12,22,0.95), rgba(6,10,18,0.92))`,
-              border: `1px solid ${THEME.cardBorder}`,
-              boxShadow: '0 10px 30px rgba(2,8,20,0.6)'
-            }}>
-              <div style={{ position: 'relative', borderRadius: 8, overflow: 'hidden', background: '#000', border: `1px solid rgba(255,255,255,0.02)` }}>
-                <video
-                  ref={videoRef}
-                  playsInline
-                  muted
-                  autoPlay
-                  style={{ width: '100%', height: 360, objectFit: 'cover', background: '#000' }}
-                />
-
-                {/* overlay status card */}
-                <div style={{ position: 'absolute', left: 12, top: 12, background: 'rgba(8,12,20,0.6)', padding: 8, borderRadius: 10, border: `1px solid rgba(255,255,255,0.03)`, color: THEME.mutedText }}>
-                  <div style={{ fontSize: 12, fontWeight: 700, color: '#dbeafe' }}>Preview Kamera</div>
-                </div>
-
-                <div style={{ position: 'absolute', left: 12, bottom: 12, right: 12, display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', padding: 10, borderRadius: 12, background: 'rgba(5,9,16,0.6)', backdropFilter: 'blur(6px)', border: `1px solid rgba(255,255,255,0.02)` }}>
-                    <div style={{
-                      width: 12,
-                      height: 12,
-                      borderRadius: 6,
-                      background: (status === 'active' || status === 'detecting' || status === 'processing') ? '#f5a623' : (status === 'success' ? THEME.accentGreen : (status === 'error' ? THEME.accentPurple : '#2f3d49'))
-                    }} />
-                    <div>
-                      <div style={{ fontSize: 11, color: THEME.mutedText }}>Status</div>
-                      <div style={{ fontSize: 14, color: '#e6eefc', fontWeight: 700 }}>{statusLabel()}</div>
-                    </div>
-                  </div>
-
-                  <div style={{ padding: 10, borderRadius: 12, background: 'rgba(5,9,16,0.6)', border: `1px solid rgba(255,255,255,0.02)`, textAlign: 'right' }}>
-                    <div style={{ fontSize: 11, color: THEME.mutedText }}>Waktu aktif</div>
-                    <div style={{ fontSize: 14, color: '#e6eefc', fontWeight: 700 }}>{renderDuration()}</div>
-                  </div>
-                </div>
-              </div>
-
-              {/* system info + control row */}
-              <div style={{ marginTop: 12, display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                <div style={{ flex: 1, minWidth: 240, background: THEME.card, borderRadius: 12, padding: 12, border: `1px solid ${THEME.cardBorder}` }}>
-                  <div style={{ fontSize: 13, color: THEME.mutedText }}>System Info</div>
-                  <div style={{ marginTop: 8, fontSize: 13, color: '#dbeafe' }}>
-                    <div><strong>Izin Kamera:</strong> <span style={{ color: '#fff', marginLeft: 6 }}>{permissionGranted ? 'Diberikan' : (status === 'error' ? 'Error / Ditolak' : 'Belum')}</span></div>
-                    <div style={{ marginTop: 6 }}><strong>Status:</strong> <span style={{ marginLeft: 6 }}>{status}</span></div>
-                    <div style={{ marginTop: 6 }}><strong>Percobaan:</strong> <span style={{ marginLeft: 6 }}>{infoLog.length ? infoLog[0].ts.toLocaleString('id-ID') : '--'}</span></div>
-                  </div>
-                </div>
-
-                <div style={{ width: 220, background: THEME.card, borderRadius: 12, padding: 12, border: `1px solid ${THEME.cardBorder}` }}>
-                  <div style={{ fontSize: 13, color: THEME.mutedText }}>Kontrol</div>
-                  <div style={{ marginTop: 10, display: 'flex', gap: 8 }}>
-                    <button onClick={resetAll} style={{ flex: 1, padding: '8px 10px', borderRadius: 8, background: 'transparent', border: `1px solid ${THEME.cardBorder}`, color: '#dbeafe', cursor: 'pointer' }}>Reset</button>
-                    <button onClick={() => { setInfoLog([]); pushLog('Log dibersihkan oleh pengguna.', 'warn'); }} style={{ padding: '8px 10px', borderRadius: 8, background: 'transparent', border: `1px solid ${THEME.cardBorder}`, color: '#dbeafe', cursor: 'pointer' }}>Bersihkan</button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* log card (mobile: below preview) */}
-            <div style={{
-              borderRadius: 14,
-              padding: 14,
-              background: THEME.card,
-              border: `1px solid ${THEME.cardBorder}`,
-              boxShadow: '0 8px 20px rgba(2,8,20,0.6)'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                <div>
-                  <div style={{ color: THEME.mutedText, fontSize: 13 }}>Log Aktivitas</div>
-                  <div style={{ color: '#a6b8d9', fontSize: 12 }}>Terurut terbaru di atas — warna menunjukkan level</div>
-                </div>
-                <div style={{ color: THEME.mutedText, fontSize: 13 }}>Total: <span style={{ color: '#e6eefc', fontWeight: 700 }}>{infoLog.length}</span></div>
-              </div>
-
-              <div style={{ background: THEME.logBg, padding: 12, borderRadius: 10, border: `1px solid rgba(255,255,255,0.02)`, maxHeight: 280, overflow: 'auto' }}>
-                {infoLog.length === 0 ? (
-                  <div style={{ color: THEME.mutedText }}>-- belum ada aktivitas --</div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {infoLog.map((l, i) => renderLogLine(l, i))}
-                  </div>
-                )}
-              </div>
-
-              <div style={{ marginTop: 10, color: THEME.mutedText, fontSize: 12 }}>Tip: Tekan "Mulai" untuk meminta izin kamera. Jika ditolak, status akan berubah menjadi Error.</div>
-            </div>
-          </div>
-
-          {/* desktop layout: small right column with log + preview side-by-side mimic */}
-          <style>{`
-            @media (min-width: 992px) {
-              .themed-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
-              .desktop-only-hide { display: none; }
-            }
-            @media (max-width: 991px) {
-              .themed-grid { display: block; }
-              .desktop-only-hide { display: block; }
-            }
-          `}</style>
-
-          <div className="desktop-only-hide" style={{ display: 'none' }} />
-        </div>
-
-        {/* invisible canvas for captures */}
-        <canvas ref={canvasRef} style={{ display: 'none' }} />
+        {/* keep hidden canvas for capture */}
+        <canvas ref={canvasRef} style={{ display: "none" }} />
       </div>
     </div>
   );
